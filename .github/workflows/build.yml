@@ -21,9 +21,6 @@ jobs:
           - os: ubuntu-latest
             artifact: JAVBED-Linux-x64
             exe: JAVBED
-          - os: macos-13
-            artifact: JAVBED-macOS-x64
-            exe: JAVBED
           - os: macos-14
             artifact: JAVBED-macOS-arm64
             exe: JAVBED
