@@ -1,13 +1,32 @@
-name: build
+name: build-and-release
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
 jobs:
-  test:
+  build:
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            artifact: JAVBED-Windows-x64
+            exe: JAVBED.exe
+          - os: ubuntu-latest
+            artifact: JAVBED-Linux-x64
+            exe: JAVBED
+          - os: macos-13
+            artifact: JAVBED-macOS-x64
+            exe: JAVBED
+          - os: macos-14
+            artifact: JAVBED-macOS-arm64
+            exe: JAVBED
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -15,5 +34,36 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: pip install -e .
+      - run: pip install -e . "pyinstaller>=6,<7"
       - run: python -m compileall -q src
+      - name: Build executable
+        run: pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src src/javbed/app.py
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/JAVBED/* -DestinationPath ${{ matrix.artifact }}.zip
+      - name: Package Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar -C dist -czf "${{ matrix.artifact }}.tar.gz" JAVBED
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.zip
+            ${{ matrix.artifact }}.tar.gz
+          if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*
