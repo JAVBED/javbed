@@ -86,6 +86,7 @@ class GamePage(QWidget):
         bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8);self.controls=QHBoxLayout();b.addLayout(self.controls);self.build_controls();root.addWidget(bar)
         if self.label == "Java":
             self.build_mods()
+            self.build_instances()
         foot = QHBoxLayout()
         self.install = QPushButton("INSTALL / UPDATE ENGINE")
         self.install.setObjectName("secondary")
@@ -103,7 +104,7 @@ class GamePage(QWidget):
         frame.setObjectName("topbar")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(18, 5, 18, 5)
-        tabs = (("Play", "play"), ("Mods", "mods")) if self.label == "Java" else (("Play", "play"),)
+        tabs = (("Play", "play"), ("Instances", "instances"), ("Mods", "mods")) if self.label == "Java" else (("Play", "play"),)
         self.tab_buttons = {}
         for title, key in tabs:
             button = QPushButton(title)
@@ -119,12 +120,13 @@ class GamePage(QWidget):
     def switch_view(self, key):
         if self.label != "Java":
             return
-        is_play = key == "play"
-        self.hero.setVisible(is_play)
-        self.playbar.setVisible(is_play)
-        self.mods_panel.setVisible(not is_play)
+        self.hero.setVisible(key == "play")
+        self.playbar.setVisible(key == "play")
+        self.mods_panel.setVisible(key == "mods")
+        self.instances_panel.setVisible(key == "instances")
         for name, button in self.tab_buttons.items():
             button.setChecked(name == key)
+
     def build_mods(self):
         self.mods_panel=QFrame();self.mods_panel.setObjectName("hero");self.mods_panel.hide();box=QVBoxLayout(self.mods_panel);box.setContentsMargins(35,25,35,25)
         title=QLabel("JAVA MODS");title.setObjectName("heroTitle");box.addWidget(title)
@@ -133,6 +135,63 @@ class GamePage(QWidget):
         row.addWidget(self.button("SEARCH",self.search_mods));box.addLayout(row)
         row2=QHBoxLayout();self.mod_instance=QLineEdit();self.mod_instance.setPlaceholderText("Instance name");self.mod_project=QLineEdit();self.mod_project.setPlaceholderText("Project slug / ID");row2.addWidget(self.mod_instance);row2.addWidget(self.mod_project);row2.addWidget(self.button("INSTALL",self.install_mod,True));row2.addWidget(self.button("LIST INSTALLED",self.list_mods));box.addLayout(row2)
         self.mod_output=QPlainTextEdit();self.mod_output.setReadOnly(True);box.addWidget(self.mod_output);self.root.insertWidget(2,self.mods_panel,1)
+    def build_instances(self):
+        self.instances_panel = QFrame()
+        self.instances_panel.setObjectName("hero")
+        self.instances_panel.hide()
+        box = QVBoxLayout(self.instances_panel)
+        box.setContentsMargins(35, 25, 35, 25)
+        title = QLabel("JAVA INSTANCES")
+        title.setObjectName("heroTitle")
+        box.addWidget(title)
+        row = QHBoxLayout()
+        self.instance_name = QLineEdit(); self.instance_name.setPlaceholderText("Instance name")
+        self.instance_era = self.combo(["release","snapshot","beta","alpha","infdev","indev","classic","preclassic"], False)
+        self.instance_version = QLineEdit(); self.instance_version.setPlaceholderText("Minecraft version")
+        self.instance_loader = self.combo(["none","fabric","quilt","forge","neoforge"], False)
+        for widget in (self.instance_name, self.instance_era, self.instance_version, self.instance_loader): row.addWidget(widget)
+        row.addWidget(self.button("CREATE", self.create_instance, True))
+        box.addLayout(row)
+        row2 = QHBoxLayout()
+        self.clone_name = QLineEdit(); self.clone_name.setPlaceholderText("Clone as...")
+        self.import_path = QLineEdit(); self.import_path.setPlaceholderText("Path to existing instance")
+        row2.addWidget(self.button("LIST", self.list_instances))
+        row2.addWidget(self.button("LAUNCH", self.launch_instance, True))
+        row2.addWidget(self.clone_name)
+        row2.addWidget(self.button("CLONE", self.clone_instance))
+        row2.addWidget(self.import_path)
+        row2.addWidget(self.button("IMPORT", self.import_instance))
+        box.addLayout(row2)
+        self.instance_output = QPlainTextEdit()
+        self.instance_output.setReadOnly(True)
+        box.addWidget(self.instance_output)
+        self.root.insertWidget(2, self.instances_panel, 1)
+
+    def create_instance(self):
+        name = self.instance_name.text().strip(); version = self.instance_version.text().strip()
+        if not name or not version: self.status.setText("Enter an instance name and Minecraft version."); return
+        args = ["instance","create",name,self.instance_era.currentText(),version]
+        if self.instance_loader.currentText() != "none": args += ["--loader",self.instance_loader.currentText()]
+        self.run(args,target=self.instance_output)
+
+    def list_instances(self):
+        self.run(["instance","list"],target=self.instance_output)
+
+    def launch_instance(self):
+        name = self.instance_name.text().strip()
+        if not name: self.status.setText("Enter an instance name."); return
+        self.run(["instance","launch",name],target=self.instance_output)
+
+    def clone_instance(self):
+        source = self.instance_name.text().strip(); dest = self.clone_name.text().strip()
+        if not source or not dest: self.status.setText("Enter the source instance and clone name."); return
+        self.run(["instance","clone",source,dest],target=self.instance_output)
+
+    def import_instance(self):
+        path = self.import_path.text().strip()
+        if not path: self.status.setText("Enter an instance path."); return
+        self.run(["instance","import",path],target=self.instance_output)
+
     def search_mods(self):
         args=["mods","search",self.mod_query.text().strip()]
         if self.mod_version.text().strip():args+=["--minecraft",self.mod_version.text().strip()]
