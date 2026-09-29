@@ -78,15 +78,17 @@ class GamePage(QWidget):
     def __init__(self,label):
         super().__init__();self.label=label;self.engine=ENGINES[label];self.proc=None;self.pool=QThreadPool.globalInstance()
         root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0);self.root=root;self.top=self.topbar();root.addWidget(self.top)
-        hero=QFrame();hero.setObjectName("hero");self.hero=hero;h=QVBoxLayout(hero);h.setContentsMargins(55,45,55,35)
-        title=QLabel({"Java":"MINECRAFT: JAVA EDITION","Bedrock":"MINECRAFT: BEDROCK EDITION","EDU":"MINECRAFT EDUCATION","LCE":"MINECRAFT: LEGACY CONSOLE EDITION","Servers":"JAVBED SERVERS"}[label]);title.setObjectName("heroTitle")
-        sub=QLabel({"Java":"Modern and historical Java builds in one launcher.","Bedrock":"Release, beta and preview Bedrock builds.","EDU":"Classic Minecraft Education builds.","LCE":"Legacy Console Edition launcher.","Servers":"Create and control Minecraft servers."}[label]);sub.setObjectName("heroSub")
-        h.addWidget(title);h.addWidget(sub);h.addStretch()
-        self.output=QPlainTextEdit();self.output.setReadOnly(True);self.output.setMaximumHeight(125);h.addWidget(self.output);root.addWidget(hero,1)
+        hero = HeroArt(label)
+        self.hero = hero
+        root.addWidget(hero, 1)
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.hide()
         bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8);self.controls=QHBoxLayout();b.addLayout(self.controls);self.build_controls();root.addWidget(bar)
         if self.label == "Java":
             self.build_mods()
             self.build_instances()
+            self.build_accounts()
         foot = QHBoxLayout()
         self.install = QPushButton("INSTALL / UPDATE ENGINE")
         self.install.setObjectName("secondary")
@@ -104,7 +106,7 @@ class GamePage(QWidget):
         frame.setObjectName("topbar")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(18, 5, 18, 5)
-        tabs = (("Play", "play"), ("Instances", "instances"), ("Mods", "mods")) if self.label == "Java" else (("Play", "play"),)
+        tabs = (("Play", "play"), ("Instances", "instances"), ("Mods", "mods"), ("Accounts", "accounts")) if self.label == "Java" else (("Play", "play"),)
         self.tab_buttons = {}
         for title, key in tabs:
             button = QPushButton(title)
@@ -124,8 +126,63 @@ class GamePage(QWidget):
         self.playbar.setVisible(key == "play")
         self.mods_panel.setVisible(key == "mods")
         self.instances_panel.setVisible(key == "instances")
+        self.accounts_panel.setVisible(key == "accounts")
         for name, button in self.tab_buttons.items():
             button.setChecked(name == key)
+
+    def build_accounts(self):
+        self.accounts_panel = QFrame()
+        self.accounts_panel.setObjectName("hero")
+        self.accounts_panel.hide()
+        box = QVBoxLayout(self.accounts_panel)
+        box.setContentsMargins(35, 25, 35, 25)
+        title = QLabel("MICROSOFT ACCOUNTS")
+        title.setObjectName("heroTitle")
+        box.addWidget(title)
+        row = QHBoxLayout()
+        self.account_alias = QLineEdit()
+        self.account_alias.setPlaceholderText("Account alias, e.g. main")
+        row.addWidget(self.account_alias)
+        row.addWidget(self.button("LOGIN", self.login_account, True))
+        row.addWidget(self.button("LIST", self.list_accounts))
+        row.addWidget(self.button("USE", self.use_account))
+        row.addWidget(self.button("REFRESH", self.refresh_account))
+        row.addWidget(self.button("REMOVE", self.remove_account))
+        box.addLayout(row)
+        note = QLabel("Login uses JAVLI Microsoft authentication. Follow the browser/device instructions JAVLI provides.")
+        note.setObjectName("small")
+        box.addWidget(note)
+        self.account_output = QPlainTextEdit()
+        self.account_output.setReadOnly(True)
+        box.addWidget(self.account_output)
+        self.root.insertWidget(2, self.accounts_panel, 1)
+
+    def login_account(self):
+        alias = self.account_alias.text().strip()
+        args = ["login"]
+        if alias:
+            args += ["--alias", alias]
+        self.run(args, target=self.account_output)
+
+    def list_accounts(self):
+        self.run(["account", "list"], target=self.account_output)
+
+    def use_account(self):
+        alias = self.account_alias.text().strip()
+        if not alias:
+            self.status.setText("Enter an account alias.")
+            return
+        self.run(["account", "use", alias], target=self.account_output)
+
+    def refresh_account(self):
+        self.run(["account", "refresh"], target=self.account_output)
+
+    def remove_account(self):
+        alias = self.account_alias.text().strip()
+        if not alias:
+            self.status.setText("Enter an account alias.")
+            return
+        self.run(["account", "remove", alias], target=self.account_output)
 
     def build_mods(self):
         self.mods_panel=QFrame();self.mods_panel.setObjectName("hero");self.mods_panel.hide();box=QVBoxLayout(self.mods_panel);box.setContentsMargins(35,25,35,25)
