@@ -33,22 +33,8 @@ static class StoreApi
     static readonly AppInstallManager Installs = new();
     static readonly string[] Kinds = ["Application","Game"];
 
-    static async Task<bool> HasLicense(string productId)
-    {
-        var result = await Context.CanAcquireStoreLicenseAsync(productId);
-        if (result.ExtendedError is { }) throw result.ExtendedError;
-        if (result.Status == StoreCanLicenseStatus.Licensable) return true;
-
-        var freeUser = Installs.GetFreeUserEntitlementAsync(productId, "", "").AsTask();
-        var freeDevice = Installs.GetFreeDeviceEntitlementAsync(productId, "", "").AsTask();
-        var results = await Task.WhenAll(freeUser, freeDevice);
-        return results.Any(x => x.Status == GetEntitlementStatus.Succeeded);
-    }
-
     public static async Task<ProductInfo> Get(string productId)
     {
-        if (!await HasLicense(productId))
-            throw new InvalidOperationException("No license is available for this product.");
 
         var result = await Context.GetStoreProductsAsync(Kinds, [productId]);
         if (result.ExtendedError is { }) throw result.ExtendedError;
