@@ -57,11 +57,11 @@ class ExtraPage(QWidget):
         super().__init__();self.label=label
         root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
         root.addWidget(self.topbar())
-        hero=QFrame();hero.setObjectName("hero");h=QVBoxLayout(hero);h.setContentsMargins(55,70,55,70)
+        hero=QFrame();hero.setObjectName("hero");self.hero=hero;h=QVBoxLayout(hero);h.setContentsMargins(55,70,55,70)
         title=QLabel(EXTRA_GAMES[label][1].upper());title.setObjectName("heroTitle")
         sub=QLabel("Launch the installed game from JAVBED." if label!="Dungeons 2" else "Ready for Dungeons 2 when a launchable installation becomes available.");sub.setObjectName("heroSub");sub.setWordWrap(True)
         h.addWidget(title);h.addWidget(sub);h.addStretch();root.addWidget(hero,1)
-        bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(35,10,35,10);self.state=QLabel();b.addWidget(self.state);b.addStretch();play=QPushButton("PLAY");play.setObjectName("play");play.clicked.connect(self.launch);b.addWidget(play);root.addWidget(bar);self.refresh()
+        bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(35,10,35,10);self.state=QLabel();b.addWidget(self.state);b.addStretch();play=QPushButton("PLAY");play.setObjectName("play");play.clicked.connect(self.launch);b.addWidget(play);root.addWidget(bar);self.refresh()
     def topbar(self):
         f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
         for text in ("Play",):
@@ -77,19 +77,46 @@ class ExtraPage(QWidget):
 class GamePage(QWidget):
     def __init__(self,label):
         super().__init__();self.label=label;self.engine=ENGINES[label];self.proc=None;self.pool=QThreadPool.globalInstance()
-        root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0);root.addWidget(self.topbar())
+        root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0);self.root=root;self.top=self.topbar();root.addWidget(self.top)
         hero=QFrame();hero.setObjectName("hero");h=QVBoxLayout(hero);h.setContentsMargins(55,45,55,35)
         title=QLabel({"Java":"MINECRAFT: JAVA EDITION","Bedrock":"MINECRAFT: BEDROCK EDITION","EDU":"MINECRAFT EDUCATION","LCE":"MINECRAFT: LEGACY CONSOLE EDITION","Servers":"JAVBED SERVERS"}[label]);title.setObjectName("heroTitle")
         sub=QLabel({"Java":"Modern and historical Java builds in one launcher.","Bedrock":"Release, beta and preview Bedrock builds.","EDU":"Classic Minecraft Education builds.","LCE":"Legacy Console Edition launcher.","Servers":"Create and control Minecraft servers."}[label]);sub.setObjectName("heroSub")
         h.addWidget(title);h.addWidget(sub);h.addStretch()
         self.output=QPlainTextEdit();self.output.setReadOnly(True);self.output.setMaximumHeight(125);h.addWidget(self.output);root.addWidget(hero,1)
         bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8);self.controls=QHBoxLayout();b.addLayout(self.controls);self.build_controls();root.addWidget(bar)
-        foot=QHBoxLayout();self.install=QPushButton("INSTALL / UPDATE ENGINE");self.install.setObjectName("secondary");self.install.clicked.connect(self.install_engine);self.status=QLabel();foot.addWidget(self.install);foot.addWidget(self.status);foot.addStretch();wrap=QWidget();wrap.setLayout(foot);root.addWidget(wrap);self.refresh_state()
+        if self.label=="Java":self.build_mods()\n        foot=QHBoxLayout();self.install=QPushButton("INSTALL / UPDATE ENGINE");self.install.setObjectName("secondary");self.install.clicked.connect(self.install_engine);self.status=QLabel();foot.addWidget(self.install);foot.addWidget(self.status);foot.addStretch();wrap=QWidget();wrap.setLayout(foot);root.addWidget(wrap);self.refresh_state()
     def topbar(self):
         f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
         for text in ("Play",):
             b=QPushButton(text);b.setObjectName("tab");b.setCheckable(True);b.setChecked(text=="Play");l.addWidget(b)
         l.addStretch();return f
+    def switch_view(self,key):
+        if self.label!="Java":return
+        self.hero.setVisible(key=="play");self.playbar.setVisible(key=="play");self.mods_panel.setVisible(key=="mods")
+    def build_mods(self):
+        self.mods_panel=QFrame();self.mods_panel.setObjectName("hero");self.mods_panel.hide();box=QVBoxLayout(self.mods_panel);box.setContentsMargins(35,25,35,25)
+        title=QLabel("JAVA MODS");title.setObjectName("heroTitle");box.addWidget(title)
+        row=QHBoxLayout();self.mod_provider=self.combo(["modrinth","curseforge"],False);self.mod_query=QLineEdit();self.mod_query.setPlaceholderText("Search mods");self.mod_version=QLineEdit();self.mod_version.setPlaceholderText("Minecraft version");self.mod_loader=self.combo(["fabric","quilt","forge","neoforge"],False)
+        for w in (self.mod_provider,self.mod_query,self.mod_version,self.mod_loader):row.addWidget(w)
+        row.addWidget(self.button("SEARCH",self.search_mods));box.addLayout(row)
+        row2=QHBoxLayout();self.mod_instance=QLineEdit();self.mod_instance.setPlaceholderText("Instance name");self.mod_project=QLineEdit();self.mod_project.setPlaceholderText("Project slug / ID");row2.addWidget(self.mod_instance);row2.addWidget(self.mod_project);row2.addWidget(self.button("INSTALL",self.install_mod,True));row2.addWidget(self.button("LIST INSTALLED",self.list_mods));box.addLayout(row2)
+        self.mod_output=QPlainTextEdit();self.mod_output.setReadOnly(True);box.addWidget(self.mod_output);self.root.insertWidget(2,self.mods_panel,1)
+    def search_mods(self):
+        args=["mods","search",self.mod_query.text().strip()]
+        if self.mod_version.text().strip():args+=["--minecraft",self.mod_version.text().strip()]
+        if self.mod_loader.currentText():args+=["--loader",self.mod_loader.currentText()]
+        if self.mod_provider.currentText()=="curseforge":args+=["--provider","curseforge"]
+        self.run(args,target=self.mod_output)
+    def install_mod(self):
+        project=self.mod_project.text().strip();instance=self.mod_instance.text().strip()
+        if not project or not instance:self.status.setText("Enter an instance and project slug / ID.");return
+        args=["mods","install",project,"--instance",instance,"--loader",self.mod_loader.currentText()]
+        if self.mod_provider.currentText()=="curseforge":args+=["--provider","curseforge"]
+        self.run(args,target=self.mod_output)
+    def list_mods(self):
+        instance=self.mod_instance.text().strip()
+        if not instance:self.status.setText("Enter an instance name.");return
+        self.run(["mods","list","--instance",instance],target=self.mod_output)
     def combo(self,items=(),editable=True):c=QComboBox();c.setEditable(editable);c.addItems(items);return c
     def button(self,text,fn,play=False):b=QPushButton(text);b.setObjectName("play" if play else "secondary");b.clicked.connect(fn);return b
     def build_controls(self):
@@ -140,15 +167,15 @@ class GamePage(QWidget):
         n=self.server.text().strip()
         if not n:self.status.setText("Enter a server name.");return
         self.run([a,n])
-    def run(self,args,capture=None,quiet=False):
+    def run(self,args,capture=None,quiet=False,target=None):
         cmd,error=self.engine.command(*[x for x in args if x])
         if error:self.status.setText(error);return
         if self.proc and self.proc.state()!=QProcess.ProcessState.NotRunning:return
-        if not quiet:self.output.clear()
+        if not quiet:(target or self.output).clear()
         self.proc=QProcess(self);self.proc.setProgram(cmd[0]);self.proc.setArguments(cmd[1:]);self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels);chunks=[]
         def ready():
             t=bytes(self.proc.readAllStandardOutput()).decode(errors="replace");chunks.append(t)
-            if not quiet:self.output.insertPlainText(t)
+            if not quiet:(target or self.output).insertPlainText(t)
         def done(code,status):
             ready()
             if capture=="versions" and hasattr(self,"version"):
