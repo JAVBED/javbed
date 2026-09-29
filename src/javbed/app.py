@@ -17,6 +17,16 @@ EXTRA_GAMES={
 "Legends":(("MinecraftLegends.exe","Legends.exe"),"Minecraft Legends"),
 "Dungeons 2":(("MinecraftDungeons2.exe","Dungeons2.exe"),"Minecraft Dungeons 2"),
 }
+STORE_PRODUCTS = {
+    "Dungeons": "9P8MK4NC0LJB",
+    "Legends": "9N98Z825TNFW",
+}
+GAME_FOLDER_NAMES = {
+    "Dungeons": ("Minecraft Dungeons",),
+    "Dungeons 2": ("Minecraft Dungeons II", "Minecraft Dungeons 2"),
+    "Legends": ("Minecraft Legends",),
+}
+
 
 class HeroArt(QLabel):
     def __init__(self,label):
@@ -54,22 +64,29 @@ def find_game(label, names):
         path = shutil.which(name)
         if path: return ("exe", path)
     if sys.platform != "win32": return None
-    if label == "Dungeons 2":
-        candidates = [
-            Path(os.getenv("ProgramFiles(x86)", "C:/Program Files (x86)"))/"Steam"/"steamapps"/"common"/"Minecraft Dungeons II",
-            Path("C:/XboxGames/Minecraft Dungeons II/Content"),
-        ]
-        for root in candidates:
-            if root.exists():
-                for pattern in ("Dungeons/Binaries/Win64/*.exe", "**/Dungeons*.exe", "**/MinecraftDungeons*.exe"):
-                    found = next(root.glob(pattern), None)
-                    if found and found.is_file(): return ("exe", str(found))
-        try:
-            script = "$p=Get-AppxPackage | Where-Object {$_.Name -match 'Dungeons' -or $_.PackageFamilyName -match 'Dungeons'} | Select-Object -First 1; if($p){$p.PackageFamilyName}"
-            ps = subprocess.run(["powershell","-NoProfile","-Command",script],capture_output=True,text=True,timeout=8,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
-            family = ps.stdout.strip()
-            if family: return ("shell", "shell:AppsFolder\\" + family + "!App")
-        except Exception: pass
+    folder_names = GAME_FOLDER_NAMES.get(label, ())
+    candidates = []
+    steam = Path(os.getenv("ProgramFiles(x86)", "C:/Program Files (x86)"))/"Steam"/"steamapps"/"common"
+    xbox = Path("C:/XboxGames")
+    for folder in folder_names:
+        candidates.extend((steam/folder, xbox/folder/"Content", xbox/folder))
+    patterns = {
+        "Dungeons": ("**/Dungeons*.exe", "**/MinecraftDungeons*.exe"),
+        "Dungeons 2": ("Dungeons/Binaries/Win64/*.exe", "**/Dungeons*.exe", "**/MinecraftDungeons*.exe"),
+        "Legends": ("**/MinecraftLegends*.exe", "**/Legends*.exe"),
+    }.get(label, ("**/*.exe",))
+    for root in candidates:
+        if not root.exists(): continue
+        for pattern in patterns:
+            found = next(root.glob(pattern), None)
+            if found and found.is_file(): return ("exe", str(found))
+    try:
+        token = "Dungeons" if label.startswith("Dungeons") else "Legends"
+        script = f"$p=Get-AppxPackage | Where-Object {{$_.Name -match '{token}' -or $_.PackageFamilyName -match '{token}'}} | Select-Object -First 1; if($p){{$p.PackageFamilyName}}"
+        ps = subprocess.run(["powershell","-NoProfile","-Command",script],capture_output=True,text=True,timeout=8,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+        family = ps.stdout.strip()
+        if family: return ("shell", "shell:AppsFolder\\" + family + "!App")
+    except Exception: pass
     roots = [Path(x) for x in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LOCALAPPDATA")) if x]
     for root in roots:
         for name in names:
@@ -77,6 +94,13 @@ def find_game(label, names):
                 path=root/base/name
                 if path.is_file(): return ("exe",str(path))
     return None
+
+def open_store_product(label):
+    product = STORE_PRODUCTS.get(label)
+    if product and sys.platform == "win32":
+        os.startfile("ms-windows-store://pdp/?ProductId=" + product)
+        return True
+    return False
 
 class ExtraPage(QWidget):
     def __init__(self,label):
@@ -86,7 +110,7 @@ class ExtraPage(QWidget):
         hero = HeroArt(label)
         self.hero = hero
         root.addWidget(hero, 1)
-        bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(35,10,35,10);self.state=QLabel();b.addWidget(self.state);b.addStretch();play=QPushButton("PLAY");play.setObjectName("play");play.clicked.connect(self.launch);b.addWidget(play);root.addWidget(bar);self.refresh()
+        bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(35,10,35,10);self.state=QLabel();b.addWidget(self.state);b.addStretch();self.play=QPushButton("PLAY");self.play.setObjectName("play");self.play.clicked.connect(self.launch);b.addWidget(self.play);root.addWidget(bar);self.refresh()
     def topbar(self):
         f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
         for text in ("Play",):
@@ -94,11 +118,16 @@ class ExtraPage(QWidget):
         l.addStretch();return f
     def refresh(self):
         self.launch_target=find_game(self.label,EXTRA_GAMES[self.label][0])
-        self.state.setText("Installed" if self.launch_target else "Not detected")
+        installed=bool(self.launch_target)
+        self.state.setText("Installed" if installed else "Not installed")
+        self.play.setText("PLAY" if installed else ("INSTALL / GET" if self.label in STORE_PRODUCTS else "GET"))
     def launch(self):
         self.refresh()
         if not self.launch_target:
-            self.state.setText("Game installation not found on this PC.")
+            if open_store_product(self.label):
+                self.state.setText("Opened Microsoft Store.")
+            else:
+                self.state.setText("No automatic install source configured.")
             return
         kind,target=self.launch_target
         if kind=="shell": subprocess.Popen(["explorer.exe",target])
