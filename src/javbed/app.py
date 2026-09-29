@@ -78,12 +78,12 @@ class GamePage(QWidget):
     def __init__(self,label):
         super().__init__();self.label=label;self.engine=ENGINES[label];self.proc=None;self.pool=QThreadPool.globalInstance()
         root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0);self.root=root;self.top=self.topbar();root.addWidget(self.top)
-        hero=QFrame();hero.setObjectName("hero");h=QVBoxLayout(hero);h.setContentsMargins(55,45,55,35)
+        hero=QFrame();hero.setObjectName("hero");self.hero=hero;h=QVBoxLayout(hero);h.setContentsMargins(55,45,55,35)
         title=QLabel({"Java":"MINECRAFT: JAVA EDITION","Bedrock":"MINECRAFT: BEDROCK EDITION","EDU":"MINECRAFT EDUCATION","LCE":"MINECRAFT: LEGACY CONSOLE EDITION","Servers":"JAVBED SERVERS"}[label]);title.setObjectName("heroTitle")
         sub=QLabel({"Java":"Modern and historical Java builds in one launcher.","Bedrock":"Release, beta and preview Bedrock builds.","EDU":"Classic Minecraft Education builds.","LCE":"Legacy Console Edition launcher.","Servers":"Create and control Minecraft servers."}[label]);sub.setObjectName("heroSub")
         h.addWidget(title);h.addWidget(sub);h.addStretch()
         self.output=QPlainTextEdit();self.output.setReadOnly(True);self.output.setMaximumHeight(125);h.addWidget(self.output);root.addWidget(hero,1)
-        bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8);self.controls=QHBoxLayout();b.addLayout(self.controls);self.build_controls();root.addWidget(bar)
+        bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8);self.controls=QHBoxLayout();b.addLayout(self.controls);self.build_controls();root.addWidget(bar)
         if self.label == "Java":
             self.build_mods()
         foot = QHBoxLayout()
@@ -99,10 +99,32 @@ class GamePage(QWidget):
         root.addWidget(wrap)
         self.refresh_state()
     def topbar(self):
-        f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
-        for text in ("Play",):
-            b=QPushButton(text);b.setObjectName("tab");b.setCheckable(True);b.setChecked(text=="Play");l.addWidget(b)
-        l.addStretch();return f
+        frame = QFrame()
+        frame.setObjectName("topbar")
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(18, 5, 18, 5)
+        tabs = (("Play", "play"), ("Mods", "mods")) if self.label == "Java" else (("Play", "play"),)
+        self.tab_buttons = {}
+        for title, key in tabs:
+            button = QPushButton(title)
+            button.setObjectName("tab")
+            button.setCheckable(True)
+            button.setChecked(key == "play")
+            button.clicked.connect(lambda checked=False, view=key: self.switch_view(view))
+            layout.addWidget(button)
+            self.tab_buttons[key] = button
+        layout.addStretch()
+        return frame
+
+    def switch_view(self, key):
+        if self.label != "Java":
+            return
+        is_play = key == "play"
+        self.hero.setVisible(is_play)
+        self.playbar.setVisible(is_play)
+        self.mods_panel.setVisible(not is_play)
+        for name, button in self.tab_buttons.items():
+            button.setChecked(name == key)
     def switch_view(self,key):
         if self.label!="Java":return
         self.hero.setVisible(key=="play");self.playbar.setVisible(key=="play");self.mods_panel.setVisible(key=="mods")
