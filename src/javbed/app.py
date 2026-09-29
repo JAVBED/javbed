@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os, re, shutil, subprocess, sys
+from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
