@@ -85,12 +85,23 @@ class GamePage(QWidget):
             self.server=QLineEdit();self.server.setPlaceholderText("Server name");self.provider=self.combo(["paper","purpur","vanilla","fabric","quilt","forge","neoforge","bds","pocketmine","powernukkitx"],False);self.version=self.combo(["latest"],True)
             for w in (self.server,self.provider,self.version):self.controls.addWidget(w)
             self.controls.addWidget(self.button("CREATE",self.create,True));self.controls.addWidget(self.button("START",lambda:self.action("start")));self.controls.addWidget(self.button("STOP",lambda:self.action("stop")))
-    def refresh_java_versions(self):\n        if self.label=="Java" and self.engine.locate():self.run(["versions","--type",self.channel.currentText()],"versions",True)\n    def refresh_state(self):
-        p=self.engine.locate();self.status.setText(("Using "+str(p)) if p else "Engine not installed")
+    def refresh_java_versions(self):
+        if self.label == "Java" and self.engine.locate():
+            self.run(["versions", "--type", self.channel.currentText()], "versions", True)
+
+    def refresh_state(self):
+        p = self.engine.locate()
+        self.status.setText(("Using " + str(p)) if p else "Engine not installed")
+
     def startup_refresh(self):
-        if not self.engine.locate():return
-        if self.label in ("Java","Bedrock"):self.run(["versions"],"versions",True)
-        elif self.label=="Servers":self.run(["versions",self.provider.currentText()],"versions",True)
+        if not self.engine.locate():
+            return
+        if self.label == "Java":
+            self.refresh_java_versions()
+        elif self.label == "Bedrock":
+            self.run(["versions"], "versions", True)
+        elif self.label == "Servers":
+            self.run(["versions", self.provider.currentText()], "versions", True)
     def install_engine(self):
         self.install.setEnabled(False);self.status.setText("Checking GitHub Releases...")
         job=Job(lambda:self.engine.install_latest())
