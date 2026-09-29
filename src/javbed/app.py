@@ -48,17 +48,33 @@ class Job(QRunnable):
         try:self.signals.done.emit(True,str(self.fn()))
         except Exception as e:self.signals.done.emit(False,str(e))
 
-def find_game(names):
+def find_game(label, names):
     for name in names:
-        p=shutil.which(name)
-        if p:return p
-    if sys.platform=="win32":
-        roots=[os.getenv("ProgramFiles"),os.getenv("ProgramFiles(x86)"),os.getenv("LOCALAPPDATA")]
-        for root in filter(None,roots):
-            for name in names:
-                for base in ("Minecraft Launcher","Microsoft Studios","XboxGames"):
-                    p=os.path.join(root,base,name)
-                    if os.path.isfile(p):return p
+        path = shutil.which(name)
+        if path: return ("exe", path)
+    if sys.platform != "win32": return None
+    if label == "Dungeons 2":
+        candidates = [
+            Path(os.getenv("ProgramFiles(x86)", "C:/Program Files (x86)"))/"Steam"/"steamapps"/"common"/"Minecraft Dungeons II",
+            Path("C:/XboxGames/Minecraft Dungeons II/Content"),
+        ]
+        for root in candidates:
+            if root.exists():
+                for pattern in ("Dungeons/Binaries/Win64/*.exe", "**/Dungeons*.exe", "**/MinecraftDungeons*.exe"):
+                    found = next(root.glob(pattern), None)
+                    if found and found.is_file(): return ("exe", str(found))
+        try:
+            script = "$p=Get-AppxPackage | Where-Object {$_.Name -match 'Dungeons' -or $_.PackageFamilyName -match 'Dungeons'} | Select-Object -First 1; if($p){$p.PackageFamilyName}"
+            ps = subprocess.run(["powershell","-NoProfile","-Command",script],capture_output=True,text=True,timeout=8,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            family = ps.stdout.strip()
+            if family: return ("shell", "shell:AppsFolder\\" + family + "!App")
+        except Exception: pass
+    roots=[Path(x) for x in (os.getenv("ProgramFiles"),os.getenv("ProgramFiles(x86")),os.getenv("LOCALAPPDATA")) if x]
+    for root in roots:
+        for name in names:
+            for base in ("Minecraft Launcher","Microsoft Studios","XboxGames"):
+                path=root/base/name
+                if path.is_file(): return ("exe",str(path))
     return None
 
 class ExtraPage(QWidget):
@@ -76,11 +92,17 @@ class ExtraPage(QWidget):
             b=QPushButton(text);b.setObjectName("tab");b.setCheckable(True);b.setChecked(text=="Play");l.addWidget(b)
         l.addStretch();return f
     def refresh(self):
-        self.path=find_game(EXTRA_GAMES[self.label][0]);self.state.setText("Installed" if self.path else "Not detected")
+        self.launch_target=find_game(self.label,EXTRA_GAMES[self.label][0])
+        self.state.setText("Installed" if self.launch_target else "Not detected")
     def launch(self):
         self.refresh()
-        if self.path:subprocess.Popen([self.path])
-        else:self.state.setText("Game executable not found on this PC.")
+        if not self.launch_target:
+            self.state.setText("Game installation not found on this PC.")
+            return
+        kind,target=self.launch_target
+        if kind=="shell": subprocess.Popen(["explorer.exe",target])
+        else: subprocess.Popen([target],cwd=str(Path(target).parent))
+
 
 class GamePage(QWidget):
     def __init__(self,label):
