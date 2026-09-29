@@ -1,8 +1,5 @@
 from __future__ import annotations
-
-import os
-import shutil
-import subprocess
+import os, shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,15 +20,11 @@ class Engine:
             if found: return Path(found)
         return None
 
-    def launch(self) -> tuple[bool, str]:
-        executable = self.locate()
-        if not executable:
-            return False, f"{self.label} engine is not installed yet. Set {self.env_var} to its executable, or add it to PATH."
-        try:
-            subprocess.Popen([str(executable)], cwd=str(executable.parent))
-            return True, f"Started {self.label}."
-        except OSError as exc:
-            return False, f"Could not start {self.label}: {exc}"
+    def command(self, *args: str) -> tuple[list[str] | None, str | None]:
+        exe = self.locate()
+        if not exe:
+            return None, f"{self.label} engine not found. Set {self.env_var} or add {self.project} to PATH."
+        return [str(exe), *args], None
 
 ENGINES = {
     "Java": Engine("Java", "javli", "JAVBED_JAVA", ("javli", "javli.exe")),
