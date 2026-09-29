@@ -37,7 +37,7 @@ jobs:
       - run: pip install -e . "pyinstaller>=6,<7"
       - run: python -m compileall -q src
       - name: Build executable
-        run: pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src src/javbed/app.py
+        run: pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src javbed_main.py
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
