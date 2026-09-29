@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "javbed"
+version = "0.1.0"
+description = "Desktop home for Java, Bedrock, Education, Legacy Console and Minecraft servers."
+requires-python = ">=3.10"
+dependencies = ["PySide6>=6.7,<7"]
+
+[project.scripts]
+javbed = "javbed.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
