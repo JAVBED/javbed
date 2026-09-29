@@ -27,10 +27,14 @@ class HeroArt(QLabel):
     def resizeEvent(self,event):
         super().resizeEvent(event);self.apply_cover()
     def apply_cover(self):
-        if self.original.isNull() or self.width()<2 or self.height()<2:return
-        scaled=self.original.scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation)
-        x=max(0,(scaled.width()-self.width())//2);y=max(0,(scaled.height()-self.height())//2)
-        self.setPixmap(scaled.copy(x,y,self.width(),self.height()))
+        if self.original.isNull() or self.width() < 2 or self.height() < 2:
+            return
+        scaled = self.original.scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.setPixmap(scaled)
 
 class Signals(QObject): done=Signal(bool,str)
 class Job(QRunnable):
@@ -57,10 +61,9 @@ class ExtraPage(QWidget):
         super().__init__();self.label=label
         root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
         root.addWidget(self.topbar())
-        hero=QFrame();hero.setObjectName("hero");self.hero=hero;h=QVBoxLayout(hero);h.setContentsMargins(55,70,55,70)
-        title=QLabel(EXTRA_GAMES[label][1].upper());title.setObjectName("heroTitle")
-        sub=QLabel("Launch the installed game from JAVBED." if label!="Dungeons 2" else "Ready for Dungeons 2 when a launchable installation becomes available.");sub.setObjectName("heroSub");sub.setWordWrap(True)
-        h.addWidget(title);h.addWidget(sub);h.addStretch();root.addWidget(hero,1)
+        hero = HeroArt(label)
+        self.hero = hero
+        root.addWidget(hero, 1)
         bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(35,10,35,10);self.state=QLabel();b.addWidget(self.state);b.addStretch();play=QPushButton("PLAY");play.setObjectName("play");play.clicked.connect(self.launch);b.addWidget(play);root.addWidget(bar);self.refresh()
     def topbar(self):
         f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
