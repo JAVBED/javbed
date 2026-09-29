@@ -149,9 +149,43 @@ class GamePage(QWidget):
     def build_server_console(self):
         self.server_console_panel=QFrame();self.server_console_panel.setObjectName("hero");self.server_console_panel.hide();box=QVBoxLayout(self.server_console_panel);box.setContentsMargins(35,25,35,25)
         title=QLabel("SERVER MANAGEMENT");title.setObjectName("heroTitle");box.addWidget(title)
-        row=QHBoxLayout();self.server_command=QLineEdit();self.server_command.setPlaceholderText("Console command / management command");row.addWidget(self.server_command);row.addWidget(self.button("STATUS",lambda:self.action("status")));row.addWidget(self.button("RESTART",lambda:self.action("restart")));box.addLayout(row)
-        note=QLabel("Live process output and management responses appear below.");note.setObjectName("small");box.addWidget(note)
+        row=QHBoxLayout();self.server_command=QLineEdit();self.server_command.setPlaceholderText("Server console command");row.addWidget(self.server_command);row.addWidget(self.button("SEND",self.send_server_command,True));row.addWidget(self.button("LOGS",self.server_logs));row.addWidget(self.button("STATUS",lambda:self.action("status")));box.addLayout(row)
+        row2=QHBoxLayout();self.property_key=QLineEdit();self.property_key.setPlaceholderText("Property key");self.property_value=QLineEdit();self.property_value.setPlaceholderText("Property value");row2.addWidget(self.property_key);row2.addWidget(self.property_value);row2.addWidget(self.button("GET",self.get_property));row2.addWidget(self.button("SET",self.set_property));box.addLayout(row2)
+        row3=QHBoxLayout();self.player_name=QLineEdit();self.player_name.setPlaceholderText("Player name");row3.addWidget(self.player_name);row3.addWidget(self.button("OP",lambda:self.player_command("op")));row3.addWidget(self.button("DEOP",lambda:self.player_command("deop")));row3.addWidget(self.button("WHITELIST ADD",lambda:self.player_command("whitelist add")));row3.addWidget(self.button("WHITELIST REMOVE",lambda:self.player_command("whitelist remove")));row3.addWidget(self.button("LIST PLAYERS",lambda:self.player_command("list")));box.addLayout(row3)
+        row4=QHBoxLayout();self.backup_name=QLineEdit();self.backup_name.setPlaceholderText("Backup filename for restore");row4.addWidget(self.button("BACKUP",self.create_backup,True));row4.addWidget(self.button("LIST BACKUPS",self.list_backups));row4.addWidget(self.backup_name);row4.addWidget(self.button("RESTORE",self.restore_backup));box.addLayout(row4)
         self.server_console_output=QPlainTextEdit();self.server_console_output.setReadOnly(True);box.addWidget(self.server_console_output);self.root.insertWidget(2,self.server_console_panel,1)
+
+    def selected_server(self):
+        name=self.server.text().strip()
+        if not name:self.status.setText("Enter a server name.")
+        return name
+    def send_server_command(self):
+        name=self.selected_server();cmd=self.server_command.text().strip()
+        if name and cmd:self.run(["send",name,*cmd.split()],target=self.server_console_output)
+    def server_logs(self):
+        name=self.selected_server()
+        if name:self.run(["logs",name],target=self.server_console_output)
+    def get_property(self):
+        name=self.selected_server();key=self.property_key.text().strip()
+        if name and key:self.run(["properties",name,key],target=self.server_console_output)
+    def set_property(self):
+        name=self.selected_server();key=self.property_key.text().strip();value=self.property_value.text().strip()
+        if name and key:self.run(["properties",name,key,value],target=self.server_console_output)
+    def player_command(self,command):
+        name=self.selected_server();player=self.player_name.text().strip()
+        if not name:return
+        parts=command.split()
+        if command!="list" and not player:self.status.setText("Enter a player name.");return
+        self.run(["send",name,*parts,*(([player] if command!="list" else []))],target=self.server_console_output)
+    def create_backup(self):
+        name=self.selected_server()
+        if name:self.run(["backup",name],target=self.server_console_output)
+    def list_backups(self):
+        name=self.selected_server()
+        if name:self.run(["backups",name],target=self.server_console_output)
+    def restore_backup(self):
+        name=self.selected_server();backup=self.backup_name.text().strip()
+        if name and backup:self.run(["restore",name,backup,"--yes"],target=self.server_console_output)
 
     def build_accounts(self):
         self.accounts_panel = QFrame()
