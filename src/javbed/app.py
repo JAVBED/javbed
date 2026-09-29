@@ -2,9 +2,10 @@ from __future__ import annotations
 import os, re, shutil, subprocess, sys
 from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
 from .engines import ENGINES
 from .artwork import cached_art, load_async
+from .settings import apply_environment, load as load_settings, save as save_settings
 
 STYLE="""QWidget{background:#211f1e;color:white;font-family:'Segoe UI'} QFrame#rail{background:#2b2928;border-right:1px solid #111} QFrame#account{background:#222120;border-bottom:1px solid #111} QLabel#logo{font-size:17px;font-weight:800} QLabel#small{font-size:11px;color:#bbb} QLabel#game{font-size:16px;font-weight:900} QFrame#topbar{background:#242221;border-bottom:1px solid #111} QPushButton#tab{background:transparent;border:0;padding:13px 10px;font-size:15px} QPushButton#tab:checked{border-bottom:3px solid #54a82f;font-weight:700} QPushButton#nav{text-align:left;background:#353231;border:1px solid #191817;padding:15px 13px;font-size:13px;font-weight:800} QPushButton#nav:hover{background:#413d3b} QPushButton#nav:checked{background:#4a4644;border-left:4px solid white} QFrame#hero{background:#171615;border:1px solid #111} QLabel#heroTitle{font-size:34px;font-weight:900} QLabel#heroSub{font-size:15px;color:#ddd} QFrame#playbar{background:#292725;border-top:1px solid #111;border-bottom:1px solid #111} QPushButton#play{background:#3c8527;border:3px solid #171717;padding:12px 65px;font-size:19px;font-weight:900} QPushButton#play:hover{background:#4c9b35} QPushButton#secondary{background:#353331;border:1px solid #666;padding:10px 14px;font-weight:700} QComboBox,QLineEdit{background:#262422;border:1px solid #666;padding:9px} QPlainTextEdit{background:#121212;border:1px solid #333;font-family:Consolas,monospace}"""
 
@@ -396,6 +397,46 @@ class GamePage(QWidget):
                     self.status.setText("No versions returned by " + self.provider.currentText())
         self.proc.readyReadStandardOutput.connect(ready);self.proc.finished.connect(done);self.proc.start()
 
+class SettingsPage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.data = load_settings()
+        root = QVBoxLayout(self)
+        root.setContentsMargins(36, 28, 36, 28)
+        title = QLabel("SETTINGS")
+        title.setObjectName("heroTitle")
+        root.addWidget(title)
+        form = QFormLayout()
+        self.memory = QSpinBox(); self.memory.setRange(512, 65536); self.memory.setSuffix(" MB"); self.memory.setValue(int(self.data["java_memory_mb"]))
+        self.width = QSpinBox(); self.width.setRange(640, 7680); self.width.setValue(int(self.data["resolution_width"]))
+        self.height = QSpinBox(); self.height.setRange(480, 4320); self.height.setValue(int(self.data["resolution_height"]))
+        self.fullscreen = QCheckBox(); self.fullscreen.setChecked(bool(self.data["fullscreen"]))
+        self.close_on_launch = QCheckBox(); self.close_on_launch.setChecked(bool(self.data["close_on_launch"]))
+        self.check_updates = QCheckBox(); self.check_updates.setChecked(bool(self.data["check_updates"]))
+        self.minecraft_dir = QLineEdit(str(self.data["minecraft_directory"]))
+        self.java_runtime = QLineEdit(str(self.data["java_runtime"]))
+        self.curseforge = QLineEdit(str(self.data["curseforge_api_key"])); self.curseforge.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("Java memory", self.memory); form.addRow("Window width", self.width); form.addRow("Window height", self.height); form.addRow("Fullscreen", self.fullscreen); form.addRow("Close launcher on game start", self.close_on_launch); form.addRow("Check for updates", self.check_updates); form.addRow("Minecraft directory", self.minecraft_dir); form.addRow("Java runtime", self.java_runtime); form.addRow("CurseForge API key", self.curseforge)
+        self.engine_fields = {}
+        for label, key in (("JAVLI path","engine_java"),("BEDLI path","engine_bedrock"),("EDULI path","engine_edu"),("LEGLI path","engine_lce"),("SERVLI path","engine_servers")):
+            field = QLineEdit(str(self.data.get(key,""))); self.engine_fields[key]=field; form.addRow(label, field)
+        root.addLayout(form)
+        actions = QHBoxLayout()
+        save_btn = QPushButton("SAVE SETTINGS"); save_btn.setObjectName("play"); save_btn.clicked.connect(self.save)
+        folder_btn = QPushButton("OPEN JAVBED DATA FOLDER"); folder_btn.setObjectName("secondary"); folder_btn.clicked.connect(self.open_data)
+        actions.addWidget(save_btn); actions.addWidget(folder_btn); actions.addStretch(); root.addLayout(actions)
+        self.status = QLabel(""); root.addWidget(self.status); root.addStretch()
+    def save(self):
+        self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip()})
+        for key, field in self.engine_fields.items(): self.data[key]=field.text().strip()
+        save_settings(self.data); apply_environment(self.data); self.status.setText("Settings saved.")
+    def open_data(self):
+        from .settings import ROOT
+        ROOT.mkdir(parents=True,exist_ok=True)
+        if sys.platform=="win32": os.startfile(ROOT)
+        elif sys.platform=="darwin": subprocess.Popen(["open",str(ROOT)])
+        else: subprocess.Popen(["xdg-open",str(ROOT)])
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620)
@@ -403,10 +444,11 @@ class MainWindow(QMainWindow):
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
         account=QFrame();account.setObjectName("account");a=QVBoxLayout(account);name=QLabel("JAVBED");name.setObjectName("logo");sub=QLabel("Universal Minecraft launcher");sub.setObjectName("small");a.addWidget(name);a.addWidget(sub);r.addWidget(account)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
-        entries=("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers")
+        entries=("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers","Settings")
         for i,label in enumerate(entries):
-            b=QPushButton(("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends") else "MINECRAFT\n" if label!="Servers" else "")+label.upper());b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
-            page=ExtraPage(label) if label in EXTRA_GAMES else GamePage(label);self.pages.append(page);self.stack.addWidget(page)
+            display = "SETTINGS" if label=="Settings" else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
+            b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
+            page=SettingsPage() if label=="Settings" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label));self.pages.append(page);self.stack.addWidget(page)
         r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)
     def refresh_all(self):
         for p in self.pages:
@@ -417,5 +459,5 @@ class MainWindow(QMainWindow):
         for n,b in enumerate(self.buttons):b.setChecked(n==i)
 
 def main():
-    app=QApplication(sys.argv);app.setApplicationName("JAVBED");app.setStyleSheet(STYLE);w=MainWindow();w.show();raise SystemExit(app.exec())
+    app=QApplication(sys.argv);app.setApplicationName("JAVBED");app.setStyleSheet(STYLE);apply_environment(load_settings());w=MainWindow();w.show();raise SystemExit(app.exec())
 if __name__=="__main__":main()
