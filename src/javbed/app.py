@@ -74,7 +74,7 @@ class GamePage(QWidget):
     def button(self,text,fn,play=False):b=QPushButton(text);b.setObjectName("play" if play else "secondary");b.clicked.connect(fn);return b
     def build_controls(self):
         if self.label=="Java":
-            self.channel=self.combo(["release","beta","classic"],False);self.version=self.combo([],True);self.controls.addWidget(self.version);self.controls.addWidget(self.channel);self.controls.addStretch();self.controls.addWidget(self.button("PLAY",lambda:self.run([self.channel.currentText(),self.version.currentText().strip()]),True))
+            self.channel=self.combo(["release","snapshot","beta","alpha","infdev","indev","classic","preclassic"],False);self.version=self.combo([],True);self.controls.addWidget(self.version);self.controls.addWidget(self.channel);self.controls.addStretch();self.controls.addWidget(self.button("PLAY",lambda:self.run([self.channel.currentText(),self.version.currentText().strip()]),True));self.channel.currentTextChanged.connect(self.refresh_java_versions)
         elif self.label=="Bedrock":
             self.channel=self.combo(["release","beta","preview"],False);self.version=self.combo([],True);self.controls.addWidget(self.version);self.controls.addWidget(self.channel);self.controls.addStretch();self.controls.addWidget(self.button("PLAY",lambda:self.run([self.channel.currentText(),self.version.currentText().strip()]),True))
         elif self.label=="EDU":
@@ -85,7 +85,7 @@ class GamePage(QWidget):
             self.server=QLineEdit();self.server.setPlaceholderText("Server name");self.provider=self.combo(["paper","purpur","vanilla","fabric","quilt","forge","neoforge","bds","pocketmine","powernukkitx"],False);self.version=self.combo(["latest"],True)
             for w in (self.server,self.provider,self.version):self.controls.addWidget(w)
             self.controls.addWidget(self.button("CREATE",self.create,True));self.controls.addWidget(self.button("START",lambda:self.action("start")));self.controls.addWidget(self.button("STOP",lambda:self.action("stop")))
-    def refresh_state(self):
+    def refresh_java_versions(self):\n        if self.label=="Java" and self.engine.locate():self.run(["versions","--type",self.channel.currentText()],"versions",True)\n    def refresh_state(self):
         p=self.engine.locate();self.status.setText(("Using "+str(p)) if p else "Engine not installed")
     def startup_refresh(self):
         if not self.engine.locate():return
