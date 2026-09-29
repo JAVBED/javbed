@@ -226,8 +226,46 @@ class GamePage(QWidget):
     def refresh_server_versions(self):
         if self.label != "Servers" or not self.engine.locate():
             return
+        provider = self.provider.currentText()
+        cmd, error = self.engine.command("versions", provider)
+        if error:
+            self.status.setText(error)
+            return
+        if hasattr(self, "server_version_proc") and self.server_version_proc:
+            if self.server_version_proc.state() != QProcess.ProcessState.NotRunning:
+                self.server_version_proc.kill()
+                self.server_version_proc.waitForFinished(1000)
         self.version.clear()
-        self.run(["versions", self.provider.currentText()], "server_versions", True)
+        self.status.setText("Loading " + provider + " versions...")
+        proc = QProcess(self)
+        self.server_version_proc = proc
+        proc.setProgram(cmd[0])
+        proc.setArguments(cmd[1:])
+        proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        chunks = []
+        def ready():
+            chunks.append(bytes(proc.readAllStandardOutput()).decode(errors="replace"))
+        def done(code, exit_status):
+            ready()
+            if provider != self.provider.currentText():
+                return
+            values = []
+            for raw_line in "".join(chunks).splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("…") or " versions" in line:
+                    continue
+                if re.fullmatch(r"[0-9][0-9A-Za-z._+-]*", line) or line == "latest":
+                    values.append(line)
+            values = list(dict.fromkeys(values))
+            self.version.clear()
+            if values:
+                self.version.addItems(values)
+                self.status.setText("Ready")
+            else:
+                self.status.setText("No versions returned by " + provider)
+        proc.readyReadStandardOutput.connect(ready)
+        proc.finished.connect(done)
+        proc.start()
 
     def refresh_java_versions(self):
         if self.label == "Java" and self.engine.locate():
