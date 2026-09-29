@@ -71,36 +71,33 @@ def find_game(label, names):
     for folder in folder_names:
         candidates.extend((steam/folder, xbox/folder/"Content", xbox/folder))
     patterns = {
-        "Dungeons": ("**/Dungeons*.exe", "**/MinecraftDungeons*.exe"),
-        "Dungeons 2": ("Dungeons/Binaries/Win64/*.exe", "**/Dungeons*.exe", "**/MinecraftDungeons*.exe"),
-        "Legends": ("**/MinecraftLegends*.exe", "**/Legends*.exe"),
-    }.get(label, ("**/*.exe",))
+        "Dungeons": ("**/Dungeons.exe", "**/Dungeons-Win64-Shipping.exe", "**/MinecraftDungeons.exe"),
+        "Dungeons 2": ("**/Dungeons2*.exe", "**/DungeonsII*.exe", "**/MinecraftDungeons2*.exe"),
+        "Legends": ("**/MinecraftLegends.exe", "**/MinecraftLegends*.exe"),
+    }.get(label, ())
     for root in candidates:
         if not root.exists(): continue
         for pattern in patterns:
             found = next(root.glob(pattern), None)
             if found and found.is_file(): return ("exe", str(found))
+    # Resolve an actual AppX application ID; never guess PackageFamilyName!App.
     try:
-        token = "Dungeons" if label.startswith("Dungeons") else "Legends"
-        script = f"$p=Get-AppxPackage | Where-Object {{$_.Name -match '{token}' -or $_.PackageFamilyName -match '{token}'}} | Select-Object -First 1; if($p){{$p.PackageFamilyName}}"
-        ps = subprocess.run(["powershell","-NoProfile","-Command",script],capture_output=True,text=True,timeout=8,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
-        family = ps.stdout.strip()
-        if family: return ("shell", "shell:AppsFolder\\" + family + "!App")
+        match = {"Dungeons":"MinecraftDungeons","Dungeons 2":"MinecraftDungeons2","Legends":"MinecraftLegends"}.get(label,"")
+        script = "$apps=Get-AppxPackage | Where-Object {$_.Name -match '" + match + "'}; foreach($p in $apps){try{$m=Get-AppxPackageManifest $p; foreach($a in $m.Package.Applications.Application){if($a.Id){Write-Output ($p.PackageFamilyName+'!'+$a.Id); exit}}}catch{}}"
+        ps = subprocess.run(["powershell","-NoProfile","-Command",script],capture_output=True,text=True,timeout=10,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+        app_id = ps.stdout.strip().splitlines()[0] if ps.stdout.strip() else ""
+        if app_id: return ("shell", "shell:AppsFolder\\" + app_id)
     except Exception: pass
-    roots = [Path(x) for x in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LOCALAPPDATA")) if x]
-    for root in roots:
-        for name in names:
-            for base in ("Minecraft Launcher","Microsoft Studios","XboxGames"):
-                path=root/base/name
-                if path.is_file(): return ("exe",str(path))
     return None
 
+
 def open_store_product(label):
-    product = STORE_PRODUCTS.get(label)
-    if product and sys.platform == "win32":
-        os.startfile("ms-windows-store://pdp/?ProductId=" + product)
-        return True
-    return False
+    if sys.platform != "win32": return False
+    query = {"Dungeons":"Minecraft Dungeons","Dungeons 2":"Minecraft Dungeons II","Legends":"Minecraft Legends"}.get(label)
+    if not query: return False
+    from urllib.parse import quote
+    os.startfile("ms-windows-store://search/?query=" + quote(query))
+    return True
 
 class ExtraPage(QWidget):
     def __init__(self,label):
