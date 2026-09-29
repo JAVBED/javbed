@@ -31,10 +31,12 @@ class HeroArt(QLabel):
             return
         scaled = self.original.scaled(
             self.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation,
         )
-        self.setPixmap(scaled)
+        x = max(0, (scaled.width() - self.width()) // 2)
+        y = 0
+        self.setPixmap(scaled.copy(x, y, self.width(), self.height()))
 
 class Signals(QObject): done=Signal(bool,str)
 class Job(QRunnable):
