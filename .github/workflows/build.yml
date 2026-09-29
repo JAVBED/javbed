@@ -30,7 +30,7 @@ jobs:
       - name: Validate Python sources
         run: python -m compileall -q src javbed_main.py
       - name: Build executable
-        run: pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src javbed_main.py
+        run: pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src --add-data "src/javbed/assets/artwork:javbed_artwork" javbed_main.py
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
