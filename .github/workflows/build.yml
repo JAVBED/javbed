@@ -1,14 +1,65 @@
-name: build-and-release
+name: Build and Release JAVBED
+
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (leave blank to auto-increment patch, e.g. v0.1.3 -> v0.1.4)"
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Choose release tag
+        id: version
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            TAG="$REQUESTED"
+            [[ "$TAG" == v* ]] || TAG="v$TAG"
+          else
+            git fetch --tags --force
+            LAST="$(git tag -l 'v*' --sort=-v:refname | head -n1)"
+            if [ -z "$LAST" ]; then
+              TAG="v0.1.0"
+            elif [[ "$LAST" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              TAG="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+            else
+              echo "Latest v* tag '$LAST' is not semver. Enter a version manually."
+              exit 1
+            fi
+          fi
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "JAVBED $TAG"
+          git push origin "$TAG"
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
@@ -19,24 +70,41 @@ jobs:
             artifact: JAVBED-Linux-x64
           - os: macos-14
             artifact: JAVBED-macOS-arm64
+
     runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - uses: actions/setup-dotnet@v4
         if: runner.os == 'Windows'
         with:
           dotnet-version: "10.0.x"
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e . "pyinstaller>=6,<7"
+
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . "pyinstaller>=6,<7"
+
       - name: Validate Python sources
         run: python -m compileall -q src javbed_main.py
-      - name: Build Store helper
+
+      - name: Build Windows Store helper
         if: runner.os == 'Windows'
-        run: dotnet publish store-helper/Javbed.StoreHelper.csproj -c Release -r win-x64 -o store-helper/publish
-      - name: Build executable
+        shell: pwsh
+        run: |
+          dotnet publish .\store-helper\Javbed.StoreHelper.csproj -c Release -r win-x64 -o .\store-helper\publish
+          if (!(Test-Path ".\store-helper\publish\Javbed.StoreHelper.exe")) {
+            throw "Store helper executable was not produced."
+          }
+
+      - name: Build JAVBED
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -44,31 +112,38 @@ jobs:
           else
             pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src --add-data "src/javbed/assets/artwork:javbed_artwork" javbed_main.py
           fi
+
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path dist/JAVBED/* -DestinationPath ${{ matrix.artifact }}.zip
-      - name: Package Unix
+        run: Compress-Archive -Path dist/JAVBED/* -DestinationPath "${{ matrix.artifact }}.zip"
+
+      - name: Package Linux/macOS
         if: runner.os != 'Windows'
         shell: bash
         run: tar -C dist -czf "${{ matrix.artifact }}.tar.gz" JAVBED
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
             ${{ matrix.artifact }}.zip
             ${{ matrix.artifact }}.tar.gz
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   release:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: JAVBED ${{ needs.prepare.outputs.tag }}
           generate_release_notes: true
           files: release-assets/*
