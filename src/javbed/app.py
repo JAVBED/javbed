@@ -82,8 +82,13 @@ def find_game(label, names):
             if found and found.is_file(): return ("exe", str(found))
     # Resolve an actual AppX application ID; never guess PackageFamilyName!App.
     try:
-        match = {"Dungeons":"MinecraftDungeons","Dungeons 2":"MinecraftDungeons2","Legends":"MinecraftLegends"}.get(label,"")
-        script = "$apps=Get-AppxPackage | Where-Object {$_.Name -match '" + match + "'}; foreach($p in $apps){try{$m=Get-AppxPackageManifest $p; foreach($a in $m.Package.Applications.Application){if($a.Id){Write-Output ($p.PackageFamilyName+'!'+$a.Id); exit}}}catch{}}"
+        if label == "Dungeons":
+            filter_script = "$_.Name -match 'MinecraftDungeons' -and $_.Name -notmatch 'Dungeons2|DungeonsII'"
+        elif label == "Dungeons 2":
+            filter_script = "$_.Name -match 'MinecraftDungeons2|MinecraftDungeonsII|Dungeons2|DungeonsII'"
+        else:
+            filter_script = "$_.Name -match 'MinecraftLegends'"
+        script = "$apps=Get-AppxPackage | Where-Object {" + filter_script + "}; foreach($p in $apps){try{$m=Get-AppxPackageManifest $p; foreach($a in $m.Package.Applications.Application){if($a.Id){Write-Output ($p.PackageFamilyName+'!'+$a.Id); exit}}}catch{}}"
         ps = subprocess.run(["powershell","-NoProfile","-Command",script],capture_output=True,text=True,timeout=10,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
         app_id = ps.stdout.strip().splitlines()[0] if ps.stdout.strip() else ""
         if app_id: return ("shell", "shell:AppsFolder\\" + app_id)
