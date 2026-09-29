@@ -1,5 +1,3 @@
-        if self.label == "Servers":
-            self.build_server_console()
 from __future__ import annotations
 import os, re, shutil, subprocess, sys
 from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt
@@ -99,6 +97,8 @@ class GamePage(QWidget):
             self.build_mods()
             self.build_instances()
             self.build_accounts()
+        if self.label == "Servers":
+            self.build_server_console()
         foot = QHBoxLayout()
         self.install = QPushButton("INSTALL / UPDATE ENGINE")
         self.install.setObjectName("secondary")
