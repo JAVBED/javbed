@@ -125,9 +125,6 @@ class GamePage(QWidget):
         self.mods_panel.setVisible(not is_play)
         for name, button in self.tab_buttons.items():
             button.setChecked(name == key)
-    def switch_view(self,key):
-        if self.label!="Java":return
-        self.hero.setVisible(key=="play");self.playbar.setVisible(key=="play");self.mods_panel.setVisible(key=="mods")
     def build_mods(self):
         self.mods_panel=QFrame();self.mods_panel.setObjectName("hero");self.mods_panel.hide();box=QVBoxLayout(self.mods_panel);box.setContentsMargins(35,25,35,25)
         title=QLabel("JAVA MODS");title.setObjectName("heroTitle");box.addWidget(title)
