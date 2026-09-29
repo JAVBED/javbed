@@ -282,12 +282,18 @@ class GamePage(QWidget):
                 if vals:self.version.clear();self.version.addItems(vals)
             elif capture == "server_versions" and hasattr(self, "version"):
                 values = []
-                for line in "".join(chunks).splitlines():
-                    values += re.findall(r"(?<!\\w)(?:\\d+(?:\\.\\d+){1,3}(?:[-._][\\w.-]+)?|latest)(?!\\w)", line, re.I)
+                for raw_line in "".join(chunks).splitlines():
+                    line = raw_line.strip()
+                    if not line or line.startswith("…") or " versions" in line:
+                        continue
+                    if re.fullmatch(r"[0-9][0-9A-Za-z._+-]*", line) or line == "latest":
+                        values.append(line)
                 values = list(dict.fromkeys(values))
+                self.version.clear()
                 if values:
-                    self.version.clear()
                     self.version.addItems(values)
+                else:
+                    self.status.setText("No versions returned by " + self.provider.currentText())
         self.proc.readyReadStandardOutput.connect(ready);self.proc.finished.connect(done);self.proc.start()
 
 class MainWindow(QMainWindow):
