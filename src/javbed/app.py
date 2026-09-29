@@ -145,15 +145,21 @@ class ExtraPage(QWidget):
         helper=store_helper_path(); key=store_game_key(self.label)
         if helper and key:
             self.play.setEnabled(False); self.state.setText("Installing...")
-            proc=QProcess(self); self.store_proc=proc; proc.setProgram(str(helper)); proc.setArguments(["install",key]); proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+            proc=QProcess(self); self.store_proc=proc; proc.setProgram(str(helper)); proc.setArguments(["install",key]); proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels); self.store_chunks=[]
             def ready():
                 text=bytes(proc.readAllStandardOutput()).decode(errors="replace")
+                if text:self.store_chunks.append(text)
                 for line in text.splitlines():
                     if line.startswith("PROGRESS|"):
                         parts=line.split("|"); self.state.setText(f"{parts[2]} {parts[1]}%")
             def done(code,status):
-                ready(); self.play.setEnabled(True); self.refresh()
-                if code!=0:self.state.setText("Install failed.")
+                ready(); self.play.setEnabled(True)
+                if code==0:
+                    self.refresh()
+                else:
+                    message="".join(self.store_chunks).strip().splitlines()
+                    detail=message[-1] if message else "Unknown Store/Gaming Services error."
+                    self.state.setText("Install failed: "+detail[:180])
             proc.readyReadStandardOutput.connect(ready); proc.finished.connect(done); proc.start(); return
         if open_store_product(self.label): self.state.setText("Opened Microsoft Store.")
         else:self.state.setText("No automatic install source configured.")
