@@ -611,6 +611,42 @@ class SettingsPage(QWidget):
         elif sys.platform=="darwin": subprocess.Popen(["open",str(ROOT)])
         else: subprocess.Popen(["xdg-open",str(ROOT)])
 
+class HomePage(QWidget):
+    def __init__(self, window):
+        super().__init__(); self.window=window
+        root=QVBoxLayout(self);root.setContentsMargins(36,28,36,28);root.setSpacing(18)
+        top=QHBoxLayout(); title=QLabel("HOME");title.setObjectName("heroTitle");top.addWidget(title);top.addStretch();refresh=QPushButton("REFRESH");refresh.setObjectName("secondary");refresh.clicked.connect(self.refresh);top.addWidget(refresh);root.addLayout(top)
+        self.summary=QLabel("JAVBED launcher overview");self.summary.setObjectName("small");root.addWidget(self.summary)
+        cards=QHBoxLayout()
+        self.games_card=self.card("GAMES");self.engines_card=self.card("ENGINES");self.servers_card=self.card("SERVERS");cards.addWidget(self.games_card[0]);cards.addWidget(self.engines_card[0]);cards.addWidget(self.servers_card[0]);root.addLayout(cards)
+        quick=QFrame();quick.setObjectName("hero");q=QVBoxLayout(quick);qt=QLabel("QUICK LAUNCH");qt.setObjectName("game");q.addWidget(qt);row=QHBoxLayout()
+        for label in ("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers"):
+            b=QPushButton(label);b.setObjectName("secondary");b.clicked.connect(lambda checked=False,name=label:self.window.select_name(name));row.addWidget(b)
+        q.addLayout(row);root.addWidget(quick)
+        self.details=QPlainTextEdit();self.details.setReadOnly(True);self.details.setMaximumHeight(190);root.addWidget(self.details);root.addStretch();QTimer.singleShot(500,self.refresh)
+    def card(self,title):
+        frame=QFrame();frame.setObjectName("hero");layout=QVBoxLayout(frame);head=QLabel(title);head.setObjectName("small");value=QLabel("…");value.setObjectName("game");layout.addWidget(head);layout.addWidget(value);return frame,value
+    def refresh(self):
+        installed=[]
+        for label in ("Dungeons","Dungeons 2","Legends"):
+            if find_game(label,EXTRA_GAMES[label][0]):installed.append(label)
+        core=[]
+        for label in ("Java","Bedrock","EDU","LCE","Servers"):
+            if ENGINES[label].locate():core.append(label)
+        installed=core+installed
+        self.games_card[1].setText(f"{len(installed)} available")
+        statuses=engine_status(); healthy=sum(1 for _,path,_ in statuses if path);self.engines_card[1].setText(f"{healthy}/{len(statuses)} ready")
+        server_engine=ENGINES["Servers"];server_text="SERVLI unavailable";server_count="—"
+        if server_engine.locate():
+            try:
+                cmd,err=server_engine.command("list")
+                if not err:
+                    result=subprocess.run(cmd,capture_output=True,text=True,timeout=8,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0));rows=[x for x in result.stdout.splitlines() if x.strip()];server_count=str(max(0,len(rows)-2));server_text=result.stdout.strip() or "No servers yet"
+            except Exception as exc:server_text=str(exc)
+        self.servers_card[1].setText(server_count+" configured" if server_count!="—" else "Unavailable")
+        engine_lines=[f"{label}: {path or 'not found'}" for label,path,_ in statuses]
+        self.details.setPlainText("Available games: "+(", ".join(installed) if installed else "none")+"\n\n"+server_text+"\n\n" + "\n".join(engine_lines))
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620)
@@ -618,16 +654,19 @@ class MainWindow(QMainWindow):
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
         account=QFrame();account.setObjectName("account");a=QVBoxLayout(account);name=QLabel("JAVBED");name.setObjectName("logo");sub=QLabel("Universal Minecraft launcher");sub.setObjectName("small");a.addWidget(name);a.addWidget(sub);r.addWidget(account)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
-        entries=("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers","Updates","Settings")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers","Updates","Settings")
         for i,label in enumerate(entries):
-            display = label.upper() if label in ("Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
+            display = label.upper() if label in ("Home","Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
             b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
-            page=SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label)));self.pages.append(page);self.stack.addWidget(page)
+            page=HomePage(self) if label=="Home" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label))));self.pages.append(page);self.stack.addWidget(page)
         r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)
     def refresh_all(self):
         for p in self.pages:
             if isinstance(p,GamePage):p.startup_refresh()
             elif isinstance(p,ExtraPage):p.refresh()
+    def select_name(self,name):
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers","Updates","Settings")
+        if name in entries:self.select(entries.index(name))
     def select(self,i):
         self.stack.setCurrentIndex(i)
         for n,b in enumerate(self.buttons):b.setChecked(n==i)
