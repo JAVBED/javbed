@@ -104,6 +104,17 @@ def open_store_product(label):
     os.startfile("ms-windows-store://search/?query=" + quote(query))
     return True
 
+def store_helper_path():
+    candidates = []
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"): candidates.append(Path(sys._MEIPASS)/"Javbed.StoreHelper.exe")
+    candidates.append(Path(__file__).resolve().parents[2]/"store-helper"/"publish"/"Javbed.StoreHelper.exe")
+    found = shutil.which("Javbed.StoreHelper.exe")
+    if found: candidates.append(Path(found))
+    return next((p for p in candidates if p.exists()), None)
+
+def store_game_key(label):
+    return {"Dungeons":"dungeons","Dungeons 2":"dungeons2","Legends":"legends"}.get(label)
+
 class ExtraPage(QWidget):
     def __init__(self,label):
         super().__init__();self.label=label
@@ -121,19 +132,31 @@ class ExtraPage(QWidget):
     def refresh(self):
         self.launch_target=find_game(self.label,EXTRA_GAMES[self.label][0])
         installed=bool(self.launch_target)
-        self.state.setText("Installed" if installed else "Not installed")
-        self.play.setText("PLAY" if installed else ("INSTALL / GET" if self.label in STORE_PRODUCTS else "GET"))
+        helper=store_helper_path() if sys.platform=="win32" else None
+        self.state.setText("Installed" if installed else ("Ready to install" if helper and store_game_key(self.label) else "Not installed"))
+        self.play.setText("PLAY" if installed else ("INSTALL / UPDATE" if helper and store_game_key(self.label) else "GET"))
     def launch(self):
         self.refresh()
-        if not self.launch_target:
-            if open_store_product(self.label):
-                self.state.setText("Opened Microsoft Store.")
-            else:
-                self.state.setText("No automatic install source configured.")
+        if self.launch_target:
+            kind,target=self.launch_target
+            if kind=="shell": subprocess.Popen(["explorer.exe",target])
+            else: subprocess.Popen([target],cwd=str(Path(target).parent))
             return
-        kind,target=self.launch_target
-        if kind=="shell": subprocess.Popen(["explorer.exe",target])
-        else: subprocess.Popen([target],cwd=str(Path(target).parent))
+        helper=store_helper_path(); key=store_game_key(self.label)
+        if helper and key:
+            self.play.setEnabled(False); self.state.setText("Installing...")
+            proc=QProcess(self); self.store_proc=proc; proc.setProgram(str(helper)); proc.setArguments(["install",key]); proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+            def ready():
+                text=bytes(proc.readAllStandardOutput()).decode(errors="replace")
+                for line in text.splitlines():
+                    if line.startswith("PROGRESS|"):
+                        parts=line.split("|"); self.state.setText(f"{parts[2]} {parts[1]}%")
+            def done(code,status):
+                ready(); self.play.setEnabled(True); self.refresh()
+                if code!=0:self.state.setText("Install failed.")
+            proc.readyReadStandardOutput.connect(ready); proc.finished.connect(done); proc.start(); return
+        if open_store_product(self.label): self.state.setText("Opened Microsoft Store.")
+        else:self.state.setText("No automatic install source configured.")
 
 
 class GamePage(QWidget):
