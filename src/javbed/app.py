@@ -69,7 +69,7 @@ def find_game(label, names):
             family = ps.stdout.strip()
             if family: return ("shell", "shell:AppsFolder\\" + family + "!App")
         except Exception: pass
-    roots=[Path(x) for x in (os.getenv("ProgramFiles"),os.getenv("ProgramFiles(x86")),os.getenv("LOCALAPPDATA")) if x]
+    roots = [Path(x) for x in (os.getenv("ProgramFiles"), os.getenv("ProgramFiles(x86)"), os.getenv("LOCALAPPDATA")) if x]
     for root in roots:
         for name in names:
             for base in ("Minecraft Launcher","Microsoft Studios","XboxGames"):
