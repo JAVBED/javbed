@@ -1,3 +1,5 @@
+        if self.label == "Servers":
+            self.build_server_console()
 from __future__ import annotations
 import os, re, shutil, subprocess, sys
 from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt
@@ -114,7 +116,7 @@ class GamePage(QWidget):
         frame.setObjectName("topbar")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(18, 5, 18, 5)
-        tabs = (("Play", "play"), ("Instances", "instances"), ("Mods", "mods"), ("Accounts", "accounts")) if self.label == "Java" else (("Play", "play"),)
+        tabs = (("Play","play"),("Instances","instances"),("Mods","mods"),("Accounts","accounts")) if self.label=="Java" else ((("Servers","play"),("Console","console")) if self.label=="Servers" else (("Play","play"),))
         self.tab_buttons = {}
         for title, key in tabs:
             button = QPushButton(title)
@@ -128,6 +130,12 @@ class GamePage(QWidget):
         return frame
 
     def switch_view(self, key):
+        if self.label == "Servers":
+            self.hero.setVisible(key == "play")
+            self.playbar.setVisible(key == "play")
+            self.server_console_panel.setVisible(key == "console")
+            for name, button in self.tab_buttons.items(): button.setChecked(name == key)
+            return
         if self.label != "Java":
             return
         self.hero.setVisible(key == "play")
@@ -137,6 +145,13 @@ class GamePage(QWidget):
         self.accounts_panel.setVisible(key == "accounts")
         for name, button in self.tab_buttons.items():
             button.setChecked(name == key)
+
+    def build_server_console(self):
+        self.server_console_panel=QFrame();self.server_console_panel.setObjectName("hero");self.server_console_panel.hide();box=QVBoxLayout(self.server_console_panel);box.setContentsMargins(35,25,35,25)
+        title=QLabel("SERVER MANAGEMENT");title.setObjectName("heroTitle");box.addWidget(title)
+        row=QHBoxLayout();self.server_command=QLineEdit();self.server_command.setPlaceholderText("Console command / management command");row.addWidget(self.server_command);row.addWidget(self.button("STATUS",lambda:self.action("status")));row.addWidget(self.button("RESTART",lambda:self.action("restart")));box.addLayout(row)
+        note=QLabel("Live process output and management responses appear below.");note.setObjectName("small");box.addWidget(note)
+        self.server_console_output=QPlainTextEdit();self.server_console_output.setReadOnly(True);box.addWidget(self.server_console_output);self.root.insertWidget(2,self.server_console_panel,1)
 
     def build_accounts(self):
         self.accounts_panel = QFrame()
@@ -287,7 +302,7 @@ class GamePage(QWidget):
         else:
             self.server=QLineEdit();self.server.setPlaceholderText("Server name");self.provider=self.combo(["paper","purpur","vanilla","fabric","quilt","forge","neoforge","bds","pocketmine","powernukkitx"],False);self.version=self.combo([],False);self.provider.currentTextChanged.connect(self.refresh_server_versions)
             for w in (self.server,self.provider,self.version):self.controls.addWidget(w)
-            self.controls.addWidget(self.button("CREATE",self.create,True));self.controls.addWidget(self.button("START",lambda:self.action("start")));self.controls.addWidget(self.button("STOP",lambda:self.action("stop")))
+            self.controls.addWidget(self.button("CREATE",self.create,True));self.controls.addWidget(self.button("LIST",lambda:self.run(["list"],target=self.output)));self.controls.addWidget(self.button("START",lambda:self.action("start")));self.controls.addWidget(self.button("STOP",lambda:self.action("stop")));self.controls.addWidget(self.button("RESTART",lambda:self.action("restart")));self.controls.addWidget(self.button("STATUS",lambda:self.action("status")))
     def refresh_server_versions(self):
         if self.label != "Servers" or not self.engine.locate():
             return
@@ -366,7 +381,7 @@ class GamePage(QWidget):
     def action(self,a):
         n=self.server.text().strip()
         if not n:self.status.setText("Enter a server name.");return
-        self.run([a,n])
+        self.run([a,n],target=self.server_console_output if hasattr(self,"server_console_output") else self.output)
     def run(self,args,capture=None,quiet=False,target=None):
         cmd,error=self.engine.command(*[x for x in args if x])
         if error:self.status.setText(error);return
