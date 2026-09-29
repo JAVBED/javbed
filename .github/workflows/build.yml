@@ -25,12 +25,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: "10.0.x"
       - run: python -m pip install --upgrade pip
       - run: pip install -e . "pyinstaller>=6,<7"
       - name: Validate Python sources
         run: python -m compileall -q src javbed_main.py
+      - name: Build Store helper
+        if: runner.os == 'Windows'
+        run: dotnet publish store-helper/Javbed.StoreHelper.csproj -c Release -r win-x64 -o store-helper/publish
       - name: Build executable
-        run: pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src --add-data "src/javbed/assets/artwork:javbed_artwork" javbed_main.py
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src --add-data "src/javbed/assets/artwork:javbed_artwork" --add-binary "store-helper/publish/Javbed.StoreHelper.exe;." javbed_main.py
+          else
+            pyinstaller --noconfirm --clean --windowed --name JAVBED --paths src --add-data "src/javbed/assets/artwork:javbed_artwork" javbed_main.py
+          fi
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
