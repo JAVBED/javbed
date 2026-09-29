@@ -6,6 +6,8 @@ from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, Q
 from .engines import ENGINES
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
+from .services import engine_status, javbed_update, open_url
+from . import __version__
 
 STYLE="""QWidget{background:#211f1e;color:white;font-family:'Segoe UI'} QFrame#rail{background:#2b2928;border-right:1px solid #111} QFrame#account{background:#222120;border-bottom:1px solid #111} QLabel#logo{font-size:17px;font-weight:800} QLabel#small{font-size:11px;color:#bbb} QLabel#game{font-size:16px;font-weight:900} QFrame#topbar{background:#242221;border-bottom:1px solid #111} QPushButton#tab{background:transparent;border:0;padding:13px 10px;font-size:15px} QPushButton#tab:checked{border-bottom:3px solid #54a82f;font-weight:700} QPushButton#nav{text-align:left;background:#353231;border:1px solid #191817;padding:15px 13px;font-size:13px;font-weight:800} QPushButton#nav:hover{background:#413d3b} QPushButton#nav:checked{background:#4a4644;border-left:4px solid white} QFrame#hero{background:#171615;border:1px solid #111} QLabel#heroTitle{font-size:34px;font-weight:900} QLabel#heroSub{font-size:15px;color:#ddd} QFrame#playbar{background:#292725;border-top:1px solid #111;border-bottom:1px solid #111} QPushButton#play{background:#3c8527;border:3px solid #171717;padding:12px 65px;font-size:19px;font-weight:900} QPushButton#play:hover{background:#4c9b35} QPushButton#secondary{background:#353331;border:1px solid #666;padding:10px 14px;font-weight:700} QComboBox,QLineEdit{background:#262422;border:1px solid #666;padding:9px} QPlainTextEdit{background:#121212;border:1px solid #333;font-family:Consolas,monospace}"""
 
@@ -397,6 +399,29 @@ class GamePage(QWidget):
                     self.status.setText("No versions returned by " + self.provider.currentText())
         self.proc.readyReadStandardOutput.connect(ready);self.proc.finished.connect(done);self.proc.start()
 
+class UpdatesPage(QWidget):
+    def __init__(self):
+        super().__init__(); root=QVBoxLayout(self); root.setContentsMargins(36,28,36,28)
+        title=QLabel("UPDATES & ENGINES"); title.setObjectName("heroTitle"); root.addWidget(title)
+        self.output=QPlainTextEdit(); self.output.setReadOnly(True); root.addWidget(self.output)
+        row=QHBoxLayout(); refresh=QPushButton("REFRESH STATUS"); refresh.setObjectName("secondary"); refresh.clicked.connect(self.refresh); update=QPushButton("UPDATE MANAGED ENGINES"); update.setObjectName("play"); update.clicked.connect(self.update_engines); self.self_btn=QPushButton("CHECK JAVBED UPDATE"); self.self_btn.setObjectName("secondary"); self.self_btn.clicked.connect(self.check_self); row.addWidget(refresh);row.addWidget(update);row.addWidget(self.self_btn);row.addStretch();root.addLayout(row); self.refresh()
+    def refresh(self):
+        text=["JAVBED "+__version__,""]
+        for label,path,tag in engine_status(): text.append(f"{label}: {path or 'not found'} {tag}".rstrip())
+        self.output.setPlainText("\n".join(text))
+    def update_engines(self):
+        self.output.appendPlainText("\nUpdating managed engines...")
+        for label,engine in ENGINES.items():
+            try:self.output.appendPlainText(label+": "+engine.install_latest())
+            except Exception as exc:self.output.appendPlainText(label+" update failed: "+str(exc))
+        self.refresh()
+    def check_self(self):
+        try:
+            tag,new,url=javbed_update(__version__)
+            if new:self.output.appendPlainText(f"\nJAVBED {tag} is available."); self.self_btn.setText("OPEN RELEASE"); self.self_btn.clicked.disconnect(); self.self_btn.clicked.connect(lambda:open_url(url))
+            else:self.output.appendPlainText("\nJAVBED is up to date.")
+        except Exception as exc:self.output.appendPlainText("\nUpdate check failed: "+str(exc))
+
 class SettingsPage(QWidget):
     def __init__(self):
         super().__init__()
@@ -444,11 +469,11 @@ class MainWindow(QMainWindow):
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
         account=QFrame();account.setObjectName("account");a=QVBoxLayout(account);name=QLabel("JAVBED");name.setObjectName("logo");sub=QLabel("Universal Minecraft launcher");sub.setObjectName("small");a.addWidget(name);a.addWidget(sub);r.addWidget(account)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
-        entries=("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers","Settings")
+        entries=("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers","Updates","Settings")
         for i,label in enumerate(entries):
-            display = "SETTINGS" if label=="Settings" else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
+            display = label.upper() if label in ("Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
             b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
-            page=SettingsPage() if label=="Settings" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label));self.pages.append(page);self.stack.addWidget(page)
+            page=SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label)));self.pages.append(page);self.stack.addWidget(page)
         r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)
     def refresh_all(self):
         for p in self.pages:
