@@ -220,9 +220,15 @@ class GamePage(QWidget):
         elif self.label=="LCE":
             self.source=self.combo(["verified","nightly-revelations","nightly-mclce"],False);self.name=QLineEdit();self.name.setPlaceholderText("Player name");self.controls.addWidget(self.source);self.controls.addWidget(self.name);self.controls.addStretch();self.controls.addWidget(self.button("PLAY",self.lce,True))
         else:
-            self.server=QLineEdit();self.server.setPlaceholderText("Server name");self.provider=self.combo(["paper","purpur","vanilla","fabric","quilt","forge","neoforge","bds","pocketmine","powernukkitx"],False);self.version=self.combo(["latest"],True)
+            self.server=QLineEdit();self.server.setPlaceholderText("Server name");self.provider=self.combo(["paper","purpur","vanilla","fabric","quilt","forge","neoforge","bds","pocketmine","powernukkitx"],False);self.version=self.combo([],False);self.provider.currentTextChanged.connect(self.refresh_server_versions)
             for w in (self.server,self.provider,self.version):self.controls.addWidget(w)
             self.controls.addWidget(self.button("CREATE",self.create,True));self.controls.addWidget(self.button("START",lambda:self.action("start")));self.controls.addWidget(self.button("STOP",lambda:self.action("stop")))
+    def refresh_server_versions(self):
+        if self.label != "Servers" or not self.engine.locate():
+            return
+        self.version.clear()
+        self.run(["versions", self.provider.currentText()], "server_versions", True)
+
     def refresh_java_versions(self):
         if self.label == "Java" and self.engine.locate():
             self.run(["versions", "--type", self.channel.currentText()], "versions", True)
@@ -239,7 +245,7 @@ class GamePage(QWidget):
         elif self.label == "Bedrock":
             self.run(["versions"], "versions", True)
         elif self.label == "Servers":
-            self.run(["versions", self.provider.currentText()], "versions", True)
+            self.refresh_server_versions()
     def install_engine(self):
         self.install.setEnabled(False);self.status.setText("Checking GitHub Releases...")
         job=Job(lambda:self.engine.install_latest())
@@ -274,6 +280,14 @@ class GamePage(QWidget):
                 for line in "".join(chunks).splitlines():vals+=re.findall(r"(?<!\w)(?:[cbra]?\d+(?:\.\d+){1,3}(?:[-._][\w.-]+)?|latest)(?!\w)",line,re.I)
                 vals=list(dict.fromkeys(vals))
                 if vals:self.version.clear();self.version.addItems(vals)
+            elif capture == "server_versions" and hasattr(self, "version"):
+                values = []
+                for line in "".join(chunks).splitlines():
+                    values += re.findall(r"(?<!\\w)(?:\\d+(?:\\.\\d+){1,3}(?:[-._][\\w.-]+)?|latest)(?!\\w)", line, re.I)
+                values = list(dict.fromkeys(values))
+                if values:
+                    self.version.clear()
+                    self.version.addItems(values)
         self.proc.readyReadStandardOutput.connect(ready);self.proc.finished.connect(done);self.proc.start()
 
 class MainWindow(QMainWindow):
