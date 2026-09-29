@@ -1,86 +1,102 @@
 from __future__ import annotations
-import sys
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
+import re, sys
+from PySide6.QtCore import QProcess, Qt
+from PySide6.QtWidgets import (QApplication,QComboBox,QFrame,QHBoxLayout,QLabel,QLineEdit,QMainWindow,QPlainTextEdit,QPushButton,QStackedWidget,QVBoxLayout,QWidget)
 from .engines import ENGINES
 
-STYLE = """
-QWidget { background: #0b0e14; color: #eef2f7; font-family: "Segoe UI"; }
-QFrame#sidebar { background: #10151d; border-right: 1px solid #202936; }
-QLabel#brand { font-size: 25px; font-weight: 800; letter-spacing: 2px; }
-QLabel#eyebrow { color: #7f8da3; font-size: 11px; font-weight: 700; }
-QLabel#title { font-size: 32px; font-weight: 800; }
-QLabel#subtitle { color: #9ba8b8; font-size: 14px; }
-QPushButton#nav { text-align: left; padding: 12px 16px; border: 0; border-radius: 9px; font-size: 14px; font-weight: 600; }
-QPushButton#nav:hover { background: #171e29; }
-QPushButton#nav:checked { background: #202a38; color: white; }
-QFrame#card { background: #111721; border: 1px solid #222d3b; border-radius: 16px; }
-QPushButton#launch { background: #f0f3f7; color: #10141a; border: 0; border-radius: 9px; padding: 11px 18px; font-weight: 800; }
-QPushButton#launch:hover { background: white; }
-QLabel#status { color: #8fa0b5; padding-top: 8px; }
-"""
+STYLE="""QWidget{background:#0b0e14;color:#eef2f7;font-family:'Segoe UI'} QFrame#sidebar{background:#10151d;border-right:1px solid #202936} QLabel#brand{font-size:25px;font-weight:800;letter-spacing:2px} QLabel#title{font-size:30px;font-weight:800} QLabel#muted{color:#91a0b3} QPushButton#nav{text-align:left;padding:12px 16px;border:0;border-radius:9px;font-size:14px;font-weight:600} QPushButton#nav:hover{background:#171e29} QPushButton#nav:checked{background:#202a38} QFrame#card{background:#111721;border:1px solid #222d3b;border-radius:16px} QComboBox,QLineEdit{background:#0d121a;border:1px solid #2b3748;border-radius:8px;padding:9px;min-height:20px} QPushButton#primary{background:#eef2f7;color:#10141a;border:0;border-radius:8px;padding:10px 16px;font-weight:800} QPushButton#secondary{background:#202a38;border:0;border-radius:8px;padding:10px 16px;font-weight:700} QPlainTextEdit{background:#080b10;border:1px solid #202936;border-radius:10px;padding:8px;font-family:Consolas,monospace}"""
 
-DESCRIPTIONS = {
-    "Java": "Install, manage and launch Minecraft Java Edition.",
-    "Bedrock": "Manage Minecraft Bedrock Edition from one clean desktop home.",
-    "EDU": "Launch and manage Minecraft Education Edition.",
-    "LCE": "Tools for Minecraft Legacy Console Edition.",
-    "Servers": "Create, configure and run Minecraft servers.",
-}
+class RunnerPage(QWidget):
+    def __init__(self,label):
+        super().__init__(); self.label=label; self.engine=ENGINES[label]; self.proc=None
+        root=QVBoxLayout(self); root.setContentsMargins(42,34,42,38); root.setSpacing(12)
+        title=QLabel(label); title.setObjectName("title"); root.addWidget(title)
+        sub=QLabel({"Java":"Minecraft Java Edition","Bedrock":"Minecraft Bedrock Edition","EDU":"Minecraft Education Edition","LCE":"Minecraft Legacy Console Edition","Servers":"Minecraft server manager"}[label]); sub.setObjectName("muted"); root.addWidget(sub)
+        card=QFrame(); card.setObjectName("card"); box=QVBoxLayout(card); box.setContentsMargins(24,22,24,22); box.setSpacing(12)
+        self.controls=QVBoxLayout(); box.addLayout(self.controls); self.build_controls()
+        self.status=QLabel("Ready"); self.status.setObjectName("muted"); box.addWidget(self.status)
+        self.output=QPlainTextEdit(); self.output.setReadOnly(True); self.output.setPlaceholderText("Command output"); self.output.setMinimumHeight(230); box.addWidget(self.output)
+        root.addWidget(card); root.addStretch()
 
-class EditionPage(QWidget):
-    def __init__(self, label: str):
-        super().__init__()
-        self.engine = ENGINES[label]
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(44, 38, 44, 44)
-        layout.setSpacing(10)
-        eyebrow = QLabel("JAVBED"); eyebrow.setObjectName("eyebrow")
-        title = QLabel(label); title.setObjectName("title")
-        subtitle = QLabel(DESCRIPTIONS[label]); subtitle.setObjectName("subtitle"); subtitle.setWordWrap(True)
-        card = QFrame(); card.setObjectName("card"); card.setMaximumWidth(720)
-        box = QVBoxLayout(card); box.setContentsMargins(28, 26, 28, 26); box.setSpacing(14)
-        heading = QLabel("Server control center" if label == "Servers" else f"{label} Edition")
-        heading.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
-        detail = QLabel(f"Powered by the {self.engine.project} engine."); detail.setObjectName("subtitle")
-        launch = QPushButton("Open " + label); launch.setObjectName("launch"); launch.setCursor(Qt.CursorShape.PointingHandCursor); launch.setMaximumWidth(180)
-        launch.clicked.connect(self.launch)
-        self.status = QLabel(""); self.status.setObjectName("status"); self.status.setWordWrap(True)
-        for widget in (heading, detail, launch, self.status): box.addWidget(widget)
-        for widget in (eyebrow, title, subtitle): layout.addWidget(widget)
-        layout.addSpacing(24); layout.addWidget(card); layout.addStretch()
+    def combo(self, items=(), editable=True):
+        c=QComboBox(); c.setEditable(editable); c.addItems(items); return c
+    def row(self,*widgets):
+        l=QHBoxLayout()
+        for w in widgets:l.addWidget(w)
+        self.controls.addLayout(l)
+    def button(self,text,fn,primary=False):
+        b=QPushButton(text); b.setObjectName("primary" if primary else "secondary"); b.clicked.connect(fn); return b
 
-    def launch(self):
-        ok, message = self.engine.launch()
-        self.status.setText(("✓ " if ok else "• ") + message)
+    def build_controls(self):
+        if self.label=="Java":
+            self.channel=self.combo(["release","beta","classic"],False); self.version=self.combo([],True)
+            self.row(self.channel,self.version,self.button("Refresh versions",lambda:self.run(["versions"],capture="versions")),self.button("Install / Launch",self.java_launch,True))
+        elif self.label=="Bedrock":
+            self.channel=self.combo(["release","beta","preview"],False); self.version=self.combo([],True)
+            self.row(self.channel,self.version,self.button("Refresh versions",lambda:self.run(["versions"],capture="versions")),self.button("Install / Launch",lambda:self.run([self.channel.currentText(),self.version.currentText().strip()]),True))
+        elif self.label=="EDU":
+            self.version=self.combo(["1.8.9","1.7.10"],True)
+            self.row(self.version,self.button("Launch",lambda:self.run([self.version.currentText().strip()]),True))
+        elif self.label=="LCE":
+            self.source=self.combo(["verified","nightly-revelations","nightly-mclce"],False); self.name=QLineEdit(); self.name.setPlaceholderText("Player name (optional)")
+            self.row(self.source,self.name,self.button("Launch",self.lce_launch,True))
+        else:
+            self.server=QLineEdit(); self.server.setPlaceholderText("Server name")
+            self.provider=self.combo(["paper","purpur","vanilla","fabric","quilt","forge","neoforge","bds","pocketmine","powernukkitx"],False)
+            self.version=self.combo(["latest"],True)
+            self.row(self.server,self.provider,self.version,self.button("Versions",self.server_versions),self.button("Create",self.server_create,True))
+            self.row(self.button("List",lambda:self.run(["list"])),self.button("Start",lambda:self.server_action("start")),self.button("Stop",lambda:self.server_action("stop")),self.button("Restart",lambda:self.server_action("restart")),self.button("Status",lambda:self.server_action("status")))
+
+    def java_launch(self): self.run([self.channel.currentText(),self.version.currentText().strip()])
+    def lce_launch(self):
+        args=["launch"]; src=self.source.currentText()
+        if src!="verified": args += ["--source",src]
+        if self.name.text().strip(): args += ["--name",self.name.text().strip()]
+        self.run(args)
+    def server_versions(self): self.run(["versions",self.provider.currentText()],capture="versions")
+    def server_create(self):
+        name=self.server.text().strip(); version=self.version.currentText().strip() or "latest"
+        if not name: self.status.setText("Enter a server name."); return
+        self.run(["create",name,self.provider.currentText(),version])
+    def server_action(self,action):
+        name=self.server.text().strip()
+        if not name: self.status.setText("Enter a server name."); return
+        self.run([action,name])
+
+    def run(self,args,capture=None):
+        cmd,error=self.engine.command(*[a for a in args if a])
+        if error: self.status.setText(error); return
+        if self.proc and self.proc.state()!=QProcess.ProcessState.NotRunning: self.status.setText("A command is already running."); return
+        self.output.clear(); self.status.setText("Running: "+" ".join(args))
+        self.proc=QProcess(self); self.proc.setProgram(cmd[0]); self.proc.setArguments(cmd[1:]); self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        captured=[]
+        def ready():
+            text=bytes(self.proc.readAllStandardOutput()).decode(errors="replace"); captured.append(text); self.output.insertPlainText(text); self.output.ensureCursorVisible()
+        def done(code,status):
+            ready(); self.status.setText("Done." if code==0 else f"Command exited with code {code}.")
+            if capture=="versions":
+                vals=[]
+                for line in "".join(captured).splitlines():
+                    vals += re.findall(r"(?<!\w)(?:[cbra]?\d+(?:\.\d+){1,3}(?:[-._][\w.-]+)?|latest)(?!\w)",line,re.I)
+                vals=list(dict.fromkeys(vals))
+                if vals:
+                    self.version.clear(); self.version.addItems(vals)
+        self.proc.readyReadStandardOutput.connect(ready); self.proc.finished.connect(done); self.proc.start()
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__()
-        self.setWindowTitle("JAVBED")
-        self.resize(1120, 720); self.setMinimumSize(900, 580)
-        root = QWidget(); shell = QHBoxLayout(root); shell.setContentsMargins(0, 0, 0, 0); shell.setSpacing(0)
-        sidebar = QFrame(); sidebar.setObjectName("sidebar"); sidebar.setFixedWidth(210)
-        side = QVBoxLayout(sidebar); side.setContentsMargins(22, 28, 22, 24); side.setSpacing(7)
-        brand = QLabel("JAVBED"); brand.setObjectName("brand"); side.addWidget(brand); side.addSpacing(26)
-        self.stack = QStackedWidget(); self.buttons = []
-        for index, label in enumerate(("Java", "Bedrock", "EDU", "LCE", "Servers")):
-            button = QPushButton(label); button.setObjectName("nav"); button.setCheckable(True); button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(lambda checked=False, i=index: self.select(i))
-            side.addWidget(button); self.buttons.append(button); self.stack.addWidget(EditionPage(label))
-        side.addStretch()
-        footer = QLabel("One launcher. Every edition."); footer.setObjectName("eyebrow"); footer.setWordWrap(True); side.addWidget(footer)
-        self.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        shell.addWidget(sidebar); shell.addWidget(self.stack, 1); self.setCentralWidget(root); self.select(0)
-
-    def select(self, index: int):
-        self.stack.setCurrentIndex(index)
-        for i, button in enumerate(self.buttons): button.setChecked(i == index)
+        super().__init__(); self.setWindowTitle("JAVBED"); self.resize(1180,760); self.setMinimumSize(920,600)
+        root=QWidget(); shell=QHBoxLayout(root); shell.setContentsMargins(0,0,0,0); shell.setSpacing(0)
+        side=QFrame(); side.setObjectName("sidebar"); side.setFixedWidth(205); nav=QVBoxLayout(side); nav.setContentsMargins(20,27,20,22)
+        brand=QLabel("JAVBED"); brand.setObjectName("brand"); nav.addWidget(brand); nav.addSpacing(25)
+        self.stack=QStackedWidget(); self.buttons=[]
+        for i,label in enumerate(("Java","Bedrock","EDU","LCE","Servers")):
+            b=QPushButton(label); b.setObjectName("nav"); b.setCheckable(True); b.clicked.connect(lambda checked=False,x=i:self.select(x)); nav.addWidget(b); self.buttons.append(b); self.stack.addWidget(RunnerPage(label))
+        nav.addStretch(); shell.addWidget(side); shell.addWidget(self.stack,1); self.setCentralWidget(root); self.select(0)
+    def select(self,i):
+        self.stack.setCurrentIndex(i)
+        for n,b in enumerate(self.buttons):b.setChecked(n==i)
 
 def main():
-    app = QApplication(sys.argv); app.setApplicationName("JAVBED"); app.setStyleSheet(STYLE)
-    window = MainWindow(); window.show()
-    raise SystemExit(app.exec())
-
-if __name__ == "__main__": main()
+    app=QApplication(sys.argv); app.setApplicationName("JAVBED"); app.setStyleSheet(STYLE); w=MainWindow(); w.show(); raise SystemExit(app.exec())
+if __name__=="__main__":main()
