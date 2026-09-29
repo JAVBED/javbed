@@ -1,18 +1,18 @@
 # JAVBED
 
-PySide6 desktop GUI for the JAVBED family of Minecraft tools.
+PySide6 desktop launcher for Java, Bedrock, Education, Legacy Console and Minecraft servers.
 
-The user-facing app has exactly five sections: **Java, Bedrock, EDU, LCE, Servers**. Internally they map to javli, bedli, eduli, legli and servli.
+JAVBED manages its own backend engines. It downloads compatible release binaries from the JAVBED GitHub organization into its private application-data directory instead of relying on similarly named executables on PATH.
 
-## Run
+## Run from source
 
     python -m venv .venv
     .venv\\Scripts\\activate
     pip install -e .
     javbed
 
-On macOS/Linux use `source .venv/bin/activate` instead.
+On macOS/Linux use `source .venv/bin/activate`.
 
-## Engine discovery
+## Releases
 
-The GUI checks for each engine on PATH, or you can point it directly at an executable with `JAVBED_JAVA`, `JAVBED_BEDROCK`, `JAVBED_EDU`, `JAVBED_LCE`, and `JAVBED_SERVERS`.
+The GitHub Actions release workflow runs only for version tags matching `v*`. Push a tag such as `v0.1.0` to build and publish the platform packages.
