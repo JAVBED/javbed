@@ -44,7 +44,7 @@ class ExtraPage(QWidget):
         bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(35,10,35,10);self.state=QLabel();b.addWidget(self.state);b.addStretch();play=QPushButton("PLAY");play.setObjectName("play");play.clicked.connect(self.launch);b.addWidget(play);root.addWidget(bar);self.refresh()
     def topbar(self):
         f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
-        for text in ("Play","Installations","Patch Notes"):
+        for text in ("Play",):
             b=QPushButton(text);b.setObjectName("tab");b.setCheckable(True);b.setChecked(text=="Play");l.addWidget(b)
         l.addStretch();return f
     def refresh(self):
@@ -67,7 +67,7 @@ class GamePage(QWidget):
         foot=QHBoxLayout();self.install=QPushButton("INSTALL / UPDATE ENGINE");self.install.setObjectName("secondary");self.install.clicked.connect(self.install_engine);self.status=QLabel();foot.addWidget(self.install);foot.addWidget(self.status);foot.addStretch();wrap=QWidget();wrap.setLayout(foot);root.addWidget(wrap);self.refresh_state()
     def topbar(self):
         f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
-        for text in ("Play","Installations","Skins","Patch Notes"):
+        for text in ("Play",):
             b=QPushButton(text);b.setObjectName("tab");b.setCheckable(True);b.setChecked(text=="Play");l.addWidget(b)
         l.addStretch();return f
     def combo(self,items=(),editable=True):c=QComboBox();c.setEditable(editable);c.addItems(items);return c
