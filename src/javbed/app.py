@@ -95,6 +95,7 @@ class GamePage(QWidget):
         bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8);self.controls=QHBoxLayout();b.addLayout(self.controls);self.build_controls();root.addWidget(bar)
         if self.label == "Java":
             self.build_mods()
+            self.build_modpacks()
             self.build_instances()
             self.build_accounts()
         if self.label == "Servers":
@@ -116,7 +117,7 @@ class GamePage(QWidget):
         frame.setObjectName("topbar")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(18, 5, 18, 5)
-        tabs = (("Play","play"),("Instances","instances"),("Mods","mods"),("Accounts","accounts")) if self.label=="Java" else ((("Servers","play"),("Console","console")) if self.label=="Servers" else (("Play","play"),))
+        tabs = (("Play","play"),("Instances","instances"),("Mods","mods"),("Modpacks","modpacks"),("Accounts","accounts")) if self.label=="Java" else ((("Servers","play"),("Console","console")) if self.label=="Servers" else (("Play","play"),))
         self.tab_buttons = {}
         for title, key in tabs:
             button = QPushButton(title)
@@ -142,6 +143,7 @@ class GamePage(QWidget):
         self.playbar.setVisible(key == "play")
         self.mods_panel.setVisible(key == "mods")
         self.instances_panel.setVisible(key == "instances")
+        self.modpacks_panel.setVisible(key == "modpacks")
         self.accounts_panel.setVisible(key == "accounts")
         for name, button in self.tab_buttons.items():
             button.setChecked(name == key)
@@ -240,6 +242,21 @@ class GamePage(QWidget):
             self.status.setText("Enter an account alias.")
             return
         self.run(["account", "remove", alias], target=self.account_output)
+
+    def build_modpacks(self):
+        self.modpacks_panel=QFrame();self.modpacks_panel.setObjectName("hero");self.modpacks_panel.hide();box=QVBoxLayout(self.modpacks_panel);box.setContentsMargins(35,25,35,25)
+        title=QLabel("MODRINTH MODPACKS");title.setObjectName("heroTitle");box.addWidget(title)
+        row=QHBoxLayout();self.pack_query=QLineEdit();self.pack_query.setPlaceholderText("Search modpacks");self.pack_slug=QLineEdit();self.pack_slug.setPlaceholderText("Modpack slug");self.pack_instance=QLineEdit();self.pack_instance.setPlaceholderText("New instance name");row.addWidget(self.pack_query);row.addWidget(self.button("SEARCH",self.search_modpacks));row.addWidget(self.pack_slug);row.addWidget(self.pack_instance);row.addWidget(self.button("INSTALL",self.install_modpack,True));box.addLayout(row)
+        self.pack_output=QPlainTextEdit();self.pack_output.setReadOnly(True);box.addWidget(self.pack_output);self.root.insertWidget(2,self.modpacks_panel,1)
+    def search_modpacks(self):
+        q=self.pack_query.text().strip()
+        if q:self.run(["modpack","search",q],target=self.pack_output)
+    def install_modpack(self):
+        slug=self.pack_slug.text().strip();name=self.pack_instance.text().strip()
+        if not slug:self.status.setText("Enter a modpack slug.");return
+        args=["modpack","install",slug]
+        if name:args+=["--instance",name]
+        self.run(args,target=self.pack_output)
 
     def build_mods(self):
         self.mods_panel=QFrame();self.mods_panel.setObjectName("hero");self.mods_panel.hide();box=QVBoxLayout(self.mods_panel);box.setContentsMargins(35,25,35,25)
