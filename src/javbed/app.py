@@ -1,6 +1,6 @@
 from __future__ import annotations
 import re, sys
-from PySide6.QtCore import QProcess, QRunnable, QThreadPool, QObject, Signal, Qt
+from PySide6.QtCore import QProcess, QRunnable, QThreadPool, QObject, Signal, Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication,QComboBox,QFrame,QHBoxLayout,QLabel,QLineEdit,QMainWindow,QPlainTextEdit,QPushButton,QStackedWidget,QVBoxLayout,QWidget
 from .engines import ENGINES
@@ -47,6 +47,13 @@ class GamePage(QWidget):
             self.row(self.server,self.provider,self.version,self.btn("VERSIONS",lambda:self.run(["versions",self.provider.currentText()],"versions")),self.btn("CREATE",self.create,True))
             self.row(self.btn("LIST",lambda:self.run(["list"])),self.btn("START",lambda:self.action("start"),True),self.btn("STOP",lambda:self.action("stop")),self.btn("RESTART",lambda:self.action("restart")),self.btn("STATUS",lambda:self.action("status")))
     def refresh_state(self): self.engine_state.setText("Installed" if self.engine.locate() else "Engine not installed")
+    def startup_refresh(self):
+        if not self.engine.locate():
+            return
+        if self.label in ("Java","Bedrock"):
+            self.run(["versions"],"versions",quiet=True)
+        elif self.label=="Servers":
+            self.run(["versions",self.provider.currentText()],"versions",quiet=True)
     def install_engine(self):
         self.install.setEnabled(False); self.status.setText("Checking GitHub Releases…")
         job=Job(lambda:self.engine.install_latest())
@@ -65,13 +72,13 @@ class GamePage(QWidget):
         n=self.server.text().strip()
         if not n:self.status.setText("Enter a server name.");return
         self.run([a,n])
-    def run(self,args,capture=None):
+    def run(self,args,capture=None,quiet=False):
         cmd,err=self.engine.command(*[x for x in args if x])
         if err:self.status.setText(err);return
         if self.proc and self.proc.state()!=QProcess.ProcessState.NotRunning:self.status.setText("Another command is running.");return
-        self.output.clear(); self.status.setText("Running…"); self.proc=QProcess(self); self.proc.setProgram(cmd[0]); self.proc.setArguments(cmd[1:]); self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels); chunks=[]
+        if not quiet:self.output.clear()\n        self.status.setText("Refreshing versions…" if quiet else "Running…"); self.proc=QProcess(self); self.proc.setProgram(cmd[0]); self.proc.setArguments(cmd[1:]); self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels); chunks=[]
         def ready():
-            t=bytes(self.proc.readAllStandardOutput()).decode(errors="replace"); chunks.append(t); self.output.insertPlainText(t); self.output.ensureCursorVisible()
+            t=bytes(self.proc.readAllStandardOutput()).decode(errors="replace"); chunks.append(t)\n            if not quiet:self.output.insertPlainText(t);self.output.ensureCursorVisible()
         def finished(code,status):
             ready(); self.status.setText("Ready" if code==0 else f"Exited with code {code}")
             if capture=="versions" and hasattr(self,"version"):
@@ -86,10 +93,13 @@ class MainWindow(QMainWindow):
         super().__init__();self.setWindowTitle("JAVBED Launcher");self.resize(1240,790);self.setMinimumSize(960,620)
         root=QWidget();layout=QHBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(230);r=QVBoxLayout(rail);r.setContentsMargins(0,28,0,20)
-        logo=QLabel("  JAVBED");logo.setObjectName("logo");r.addWidget(logo);r.addSpacing(25);self.stack=QStackedWidget();self.buttons=[]
+        logo=QLabel("  JAVBED");logo.setObjectName("logo");r.addWidget(logo);r.addSpacing(25);self.stack=QStackedWidget();self.buttons=[];self.pages=[]
         for i,label in enumerate(("Java","Bedrock","EDU","LCE","Servers")):
-            b=QPushButton(label);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b);self.stack.addWidget(GamePage(label))
-        r.addStretch();foot=QLabel("  JAVBED LAUNCHER");foot.setObjectName("muted");r.addWidget(foot);layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0)
+            b=QPushButton(label);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b);page=GamePage(label);self.pages.append(page);self.stack.addWidget(page)
+        r.addStretch();foot=QLabel("  JAVBED LAUNCHER");foot.setObjectName("muted");r.addWidget(foot);layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(250,self.refresh_all_versions)
+    def refresh_all_versions(self):
+        for page in self.pages:
+            page.startup_refresh()
     def select(self,i):
         self.stack.setCurrentIndex(i)
         for n,b in enumerate(self.buttons):b.setChecked(n==i)
