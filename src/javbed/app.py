@@ -84,7 +84,20 @@ class GamePage(QWidget):
         h.addWidget(title);h.addWidget(sub);h.addStretch()
         self.output=QPlainTextEdit();self.output.setReadOnly(True);self.output.setMaximumHeight(125);h.addWidget(self.output);root.addWidget(hero,1)
         bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8);self.controls=QHBoxLayout();b.addLayout(self.controls);self.build_controls();root.addWidget(bar)
-        if self.label=="Java":self.build_mods()\n        foot=QHBoxLayout();self.install=QPushButton("INSTALL / UPDATE ENGINE");self.install.setObjectName("secondary");self.install.clicked.connect(self.install_engine);self.status=QLabel();foot.addWidget(self.install);foot.addWidget(self.status);foot.addStretch();wrap=QWidget();wrap.setLayout(foot);root.addWidget(wrap);self.refresh_state()
+        if self.label == "Java":
+            self.build_mods()
+        foot = QHBoxLayout()
+        self.install = QPushButton("INSTALL / UPDATE ENGINE")
+        self.install.setObjectName("secondary")
+        self.install.clicked.connect(self.install_engine)
+        self.status = QLabel()
+        foot.addWidget(self.install)
+        foot.addWidget(self.status)
+        foot.addStretch()
+        wrap = QWidget()
+        wrap.setLayout(foot)
+        root.addWidget(wrap)
+        self.refresh_state()
     def topbar(self):
         f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
         for text in ("Play",):
