@@ -8,6 +8,7 @@ from .engines import ENGINES
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
+from .storymode import DOWNLOAD_URLS
 from . import __version__
 
 STYLE="""QWidget{background:#211f1e;color:white;font-family:'Segoe UI'} QFrame#rail{background:#2b2928;border-right:1px solid #111} QFrame#account{background:#222120;border-bottom:1px solid #111} QLabel#logo{font-size:17px;font-weight:800} QLabel#small{font-size:11px;color:#bbb} QLabel#game{font-size:16px;font-weight:900} QFrame#topbar{background:#242221;border-bottom:1px solid #111} QPushButton#tab{background:transparent;border:0;padding:13px 10px;font-size:15px} QPushButton#tab:checked{border-bottom:3px solid #54a82f;font-weight:700} QPushButton#nav{text-align:left;background:#353231;border:1px solid #191817;padding:15px 13px;font-size:13px;font-weight:800} QPushButton#nav:hover{background:#413d3b} QPushButton#nav:checked{background:#4a4644;border-left:4px solid white} QFrame#hero{background:#171615;border:1px solid #111} QLabel#heroTitle{font-size:34px;font-weight:900} QLabel#heroSub{font-size:15px;color:#ddd} QFrame#playbar{background:#292725;border-top:1px solid #111;border-bottom:1px solid #111} QPushButton#play{background:#3c8527;border:3px solid #171717;padding:12px 65px;font-size:19px;font-weight:900} QPushButton#play:hover{background:#4c9b35} QPushButton#secondary{background:#353331;border:1px solid #666;padding:10px 14px;font-weight:700} QComboBox,QLineEdit{background:#262422;border:1px solid #666;padding:9px} QPlainTextEdit{background:#121212;border:1px solid #333;font-family:Consolas,monospace}"""
@@ -173,6 +174,55 @@ class ExtraPage(QWidget):
         if open_store_product(self.label): self.state.setText("Opened Microsoft Store.")
         else:self.state.setText("No automatic install source configured.")
 
+
+class StoryModePage(QWidget):
+    def __init__(self):
+        super().__init__();self.paths=load_settings();root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
+        top=QFrame();top.setObjectName("topbar");tl=QHBoxLayout(top);tl.setContentsMargins(18,5,18,5);tl.addWidget(QLabel("Story Mode"));tl.addStretch();root.addWidget(top)
+        self.hero=HeroArt("Story Mode");root.addWidget(self.hero,1)
+        bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8)
+        self.season=QComboBox();self.season.addItems(["Season 1","Season 2"]);self.season.currentIndexChanged.connect(self.refresh);b.addWidget(self.season)
+        self.state=QLabel();b.addWidget(self.state);b.addStretch()
+        locate=QPushButton("LOCATE INSTALLATION");locate.setObjectName("secondary");locate.clicked.connect(self.locate);b.addWidget(locate)
+        iso=QPushButton("INSTALL FROM ISO");iso.setObjectName("secondary");iso.clicked.connect(self.install_iso);b.addWidget(iso)
+        self.play=QPushButton("PLAY");self.play.setObjectName("play");self.play.clicked.connect(self.launch);b.addWidget(self.play);root.addWidget(bar);self.refresh()
+    def key(self):return "story_mode_s1_path" if self.season.currentIndex()==0 else "story_mode_s2_path"
+    def title(self):return "Story Mode" if self.season.currentIndex()==0 else "Story Mode 2"
+    def detect(self):
+        saved=str(self.paths.get(self.key(),"")).strip()
+        if saved and Path(saved).is_file():return Path(saved)
+        if sys.platform=="win32":
+            roots=[Path(os.getenv("ProgramFiles(x86)","C:/Program Files (x86)"))/"Steam"/"steamapps"/"common",Path(os.getenv("ProgramFiles","C:/Program Files"))]
+            names=("Minecraft Story Mode","Minecraft - Story Mode") if self.season.currentIndex()==0 else ("Minecraft Story Mode - Season Two","Minecraft Story Mode Season Two")
+            for root in roots:
+                for name in names:
+                    base=root/name
+                    if base.exists():
+                        for pattern in ("**/*.exe",):
+                            for p in base.glob(pattern):
+                                if "unins" not in p.name.lower() and "setup" not in p.name.lower():return p
+        return None
+    def refresh(self):
+        self.target=self.detect();self.state.setText("Installed" if self.target else "Not detected");self.play.setEnabled(bool(self.target));self.play.setText("PLAY" if self.target else "PLAY")
+    def locate(self):
+        path,_=QFileDialog.getOpenFileName(self,"Locate Minecraft: Story Mode executable","","Executable (*.exe);;All files (*)")
+        if path:self.paths[self.key()]=path;save_settings(self.paths);self.refresh()
+    def launch(self):
+        self.refresh()
+        if self.target:subprocess.Popen([str(self.target)],cwd=str(self.target.parent))
+    def install_iso(self):
+        if sys.platform!="win32":self.state.setText("ISO installation is currently Windows-only.");return
+        iso,_=QFileDialog.getOpenFileName(self,"Select Story Mode ISO","","ISO images (*.iso);;All files (*)")
+        if not iso:return
+        script="$img=Mount-DiskImage -ImagePath '" + iso.replace("'","''") + "' -PassThru; $vol=$img | Get-Volume; Write-Output ($vol.DriveLetter+':')"
+        try:
+            result=subprocess.run(["powershell","-NoProfile","-Command",script],capture_output=True,text=True,timeout=30,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0));drive=result.stdout.strip().splitlines()[-1]
+            candidates=[]
+            for pattern in ("setup.exe","install.exe","*.exe"):candidates.extend(Path(drive).glob(pattern))
+            installer=next((p for p in candidates if p.is_file()),None)
+            if not installer:self.state.setText("Mounted ISO, but no installer executable was found.");return
+            subprocess.Popen([str(installer)],cwd=str(installer.parent));self.state.setText("Installer opened. Locate the game here after installation.")
+        except Exception as exc:self.state.setText("ISO install failed: "+str(exc)[:140])
 
 class GamePage(QWidget):
     def __init__(self,label):
@@ -663,18 +713,18 @@ class MainWindow(QMainWindow):
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
         account=QFrame();account.setObjectName("account");a=QVBoxLayout(account);name=QLabel("JAVBED");name.setObjectName("logo");sub=QLabel("Universal Minecraft launcher");sub.setObjectName("small");a.addWidget(name);a.addWidget(sub);r.addWidget(account)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers","Updates","Settings")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Servers","Updates","Settings")
         for i,label in enumerate(entries):
-            display = label.upper() if label in ("Home","Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
+            display = label.upper() if label in ("Home","Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
             b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
-            page=HomePage(self) if label=="Home" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label))));self.pages.append(page);self.stack.addWidget(page)
+            page=HomePage(self) if label=="Home" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label)))));self.pages.append(page);self.stack.addWidget(page)
         r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)
     def refresh_all(self):
         for p in self.pages:
             if isinstance(p,GamePage):p.startup_refresh()
             elif isinstance(p,ExtraPage):p.refresh()
     def select_name(self,name):
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers","Updates","Settings")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Servers","Updates","Settings")
         if name in entries:self.select(entries.index(name))
     def select(self,i):
         self.stack.setCurrentIndex(i)
