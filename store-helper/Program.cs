@@ -51,11 +51,24 @@ static class StoreApi
     public static async Task Install(ProductInfo info)
     {
         AppInstallItem? item = Installs.AppInstallItems.FirstOrDefault(x => x.ProductId.Equals(info.ProductId, StringComparison.OrdinalIgnoreCase));
+        if (item is null && IsInstalled(info))
+            item = await Installs.UpdateAppByPackageFamilyNameAsync(info.PackageFamilyName);
+
         if (item is null)
         {
-            item = IsInstalled(info)
-                ? await Installs.UpdateAppByPackageFamilyNameAsync(info.PackageFamilyName)
-                : await Installs.StartAppInstallAsync(info.ProductId, "", false, false);
+            // Game Pass / subscription titles may need Gaming Services entitlement materialized first.
+            try
+            {
+                var user = Installs.GetFreeUserEntitlementAsync(info.ProductId, "", "").AsTask();
+                var device = Installs.GetFreeDeviceEntitlementAsync(info.ProductId, "", "").AsTask();
+                await Task.WhenAll(user, device);
+                Console.WriteLine($"ENTITLEMENT|user={user.Result.Status}|device={device.Result.Status}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("ENTITLEMENT|" + ex.Message);
+            }
+            item = await Installs.StartAppInstallAsync(info.ProductId, "", false, false);
         }
         if (item is null) throw new InvalidOperationException("Could not create install request.");
 
