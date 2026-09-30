@@ -131,10 +131,19 @@ class ExtraPage(QWidget):
         l.addStretch();return f
     def refresh(self):
         self.launch_target=find_game(self.label,EXTRA_GAMES[self.label][0])
-        installed=bool(self.launch_target)
         helper=store_helper_path() if sys.platform=="win32" else None
-        self.state.setText("Installed" if installed else ("Ready to install" if helper and store_game_key(self.label) else "Not installed"))
-        self.play.setText("PLAY" if installed else ("INSTALL / UPDATE" if helper and store_game_key(self.label) else "GET"))
+        key=store_game_key(self.label)
+        if helper and key:
+            try:
+                result=subprocess.run([str(helper),"status",key],capture_output=True,text=True,timeout=15,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+                output=result.stdout.splitlines()
+                if "INSTALLED" in output:
+                    appid=next((x[6:] for x in output if x.startswith("APPID|") and x[6:]),"")
+                    if appid:self.launch_target=("shell","shell:AppsFolder\\"+appid)
+            except Exception:pass
+        installed=bool(self.launch_target)
+        self.state.setText("Installed" if installed else ("Ready to install" if helper and key else "Not installed"))
+        self.play.setText("PLAY" if installed else ("INSTALL / UPDATE" if helper and key else "GET"))
     def launch(self):
         self.refresh()
         if self.launch_target:
