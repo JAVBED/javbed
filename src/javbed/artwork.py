@@ -10,6 +10,8 @@ FILES = {
     "Dungeons": "dungeons.webp",
     "Dungeons 2": "dungeons2.webp",
     "Legends": "legends.webp",
+    "Story Mode": "storymode.webp",
+    "Story Mode 2": "storymode.webp",
 }
 
 def artwork_dir() -> Path:
