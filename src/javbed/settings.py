@@ -19,6 +19,8 @@ DEFAULTS = {
     "engine_edu": "",
     "engine_lce": "",
     "engine_servers": "",
+    "story_mode_s1_path": "",
+    "story_mode_s2_path": "",
 }
 def load():
     data=dict(DEFAULTS)
