@@ -48,6 +48,19 @@ static class StoreApi
     public static bool IsInstalled(ProductInfo info)
         => Packages.FindPackagesForUser(string.Empty, info.PackageFamilyName).Any();
 
+    public static string? AppUserModelId(ProductInfo info)
+    {
+        var package = Packages.FindPackagesForUser(string.Empty, info.PackageFamilyName).FirstOrDefault();
+        if (package is null) return null;
+        try
+        {
+            var entries = package.GetAppListEntriesAsync().AsTask().GetAwaiter().GetResult();
+            var entry = entries.FirstOrDefault();
+            return entry?.AppUserModelId;
+        }
+        catch { return null; }
+    }
+
     public static async Task Install(ProductInfo info)
     {
         AppInstallItem? item = Installs.AppInstallItems.FirstOrDefault(x => x.ProductId.Equals(info.ProductId, StringComparison.OrdinalIgnoreCase));
@@ -100,7 +113,7 @@ class Program
             switch (args[0].ToLowerInvariant())
             {
                 case "status":
-                    Console.WriteLine(StoreApi.IsInstalled(info) ? "INSTALLED" : "NOT_INSTALLED");
+                    if (StoreApi.IsInstalled(info)) { Console.WriteLine("INSTALLED"); Console.WriteLine("APPID|" + (StoreApi.AppUserModelId(info) ?? "")); } else Console.WriteLine("NOT_INSTALLED");
                     return 0;
                 case "install":
                     await StoreApi.Install(info);
