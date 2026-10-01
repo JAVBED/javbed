@@ -1,9 +1,6 @@
 name: Build and Release JAVBED
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -30,9 +27,7 @@ jobs:
         env:
           REQUESTED: ${{ inputs.version }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            TAG="$GITHUB_REF_NAME"
-          elif [ -n "$REQUESTED" ]; then
+          if [ -n "$REQUESTED" ]; then
             TAG="$REQUESTED"
             [[ "$TAG" == v* ]] || TAG="v$TAG"
           else
@@ -51,7 +46,7 @@ jobs:
             echo "Release tag must be vMAJOR.MINOR.PATCH."
             exit 1
           fi
-          if [ "$GITHUB_EVENT_NAME" != "push" ] && git rev-parse "$TAG" >/dev/null 2>&1; then
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG already exists."
             exit 1
           fi
@@ -59,7 +54,6 @@ jobs:
           echo "Release tag: $TAG"
 
       - name: Create and push tag
-        if: github.event_name == 'workflow_dispatch'
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |

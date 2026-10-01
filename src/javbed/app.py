@@ -2,9 +2,14 @@ from __future__ import annotations
 import os, re, shutil, subprocess, sys, threading
 from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
 from .engines import ENGINES
+from . import history
+from .accounts import active_account, avatar_path
+from .instances import get_instance
+from .jobs import Job
+from .home import HomePage
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
@@ -56,15 +61,6 @@ class HeroArt(QLabel):
         x = max(0, (scaled.width() - self.width()) // 2)
         y = 0
         self.setPixmap(scaled.copy(x, y, self.width(), self.height()))
-
-class Signals(QObject): done=Signal(bool,object)
-class Job(QRunnable):
-    def __init__(self,fn):super().__init__();self.fn=fn;self.signals=Signals()
-    def run(self):
-        try:ok,result=True,self.fn()
-        except Exception as exc:ok,result=False,str(exc)
-        try:self.signals.done.emit(ok,result)
-        except RuntimeError:pass  # The window may have closed before the job finished.
 
 class DownloadSignals(QObject):
     progress = Signal(object, object)
@@ -181,10 +177,11 @@ def home_snapshot():
         except (OSError,subprocess.SubprocessError):
             pass
     settings=load_settings()
-    if any(detect_story_mode(settings,index) for index in (0,1)):
-        installed.append("Story Mode")
+    for index, label in enumerate(("Story Mode Season 1", "Story Mode Season 2")):
+        if detect_story_mode(settings,index):
+            installed.append(label)
     statuses=engine_status()
-    server_text="SERVLI unavailable";server_count=None
+    server_text="SERVLI unavailable";server_count=None;running_count=None
     server_engine=ENGINES["Servers"]
     if server_engine.locate():
         try:
@@ -192,11 +189,14 @@ def home_snapshot():
             if not error:
                 result=subprocess.run(command,capture_output=True,text=True,timeout=8,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
                 rows=[line for line in result.stdout.splitlines() if line.strip()]
-                server_count=max(0,len(rows)-2)
+                server_count=sum(bool(re.search(r"\b(?:RUNNING|STOPPED)\b", line)) for line in rows)
+                running_count=sum(bool(re.search(r"\bRUNNING\b", line)) for line in rows)
                 server_text=result.stdout.strip() or "No servers yet"
         except (OSError,subprocess.SubprocessError) as exc:
             server_text=str(exc)
-    return installed,statuses,server_count,server_text
+    account = active_account()
+    avatar = avatar_path(account)
+    return installed,statuses,server_count,running_count,server_text,account,str(avatar or ""),history.summary()
 
 def mount_story_iso(iso):
     script="$img=Mount-DiskImage -ImagePath '" + iso.replace("'","''") + "' -PassThru; $vol=$img | Get-Volume; Write-Output ($vol.DriveLetter+':')"
@@ -249,7 +249,9 @@ class ExtraPage(QWidget):
             kind,target=self.launch_target
             try:
                 if kind=="shell": subprocess.Popen(["explorer.exe",target])
-                else: subprocess.Popen([target],cwd=str(Path(target).parent))
+                else:
+                    process = subprocess.Popen([target],cwd=str(Path(target).parent))
+                    history.watch_process(process, self.label)
             except OSError as exc:
                 self.state.setText("Launch failed: "+str(exc)[:140])
             return
@@ -304,7 +306,9 @@ class StoryModePage(QWidget):
     def launch(self):
         self.refresh()
         if self.target:
-            try:subprocess.Popen([str(self.target)],cwd=str(self.target.parent))
+            try:
+                process = subprocess.Popen([str(self.target)],cwd=str(self.target.parent))
+                history.watch_process(process, self.title())
             except OSError as exc:self.state.setText("Launch failed: "+str(exc)[:140])
     def download_selected(self):
         title=self.title();url=DOWNLOAD_URLS.get(title)
@@ -714,6 +718,17 @@ class GamePage(QWidget):
             if not quiet:(target or self.output).insertPlainText(t)
         def done(code,status):
             ready()
+            if code == 0 and self.label != "Servers":
+                launch = bool(args) and (args[0] == "launch" or (self.label == "Java" and args[0] == "instance" and len(args) > 2 and args[1] == "launch") or (self.label in ("Java", "Bedrock", "EDU") and args[0] not in ("versions", "mods", "modpack", "resourcepack", "shader", "instance", "account", "login", "java", "update")))
+                if launch:
+                    match = re.search(r"\bPID\s+(\d+)\b", "".join(chunks))
+                    if match:
+                        instance = args[2] if args[0] == "instance" else ""
+                        info = get_instance(instance) if instance else None
+                        version = str(info.get("version", "")) if info else (args[-1] if self.label in ("Java", "Bedrock", "EDU") and args else "")
+                        loader = str(info.get("loader", "")) if info else ""
+                        channel = str(info.get("era", "")) if info else (args[0] if self.label in ("Java", "Bedrock") else "")
+                        history.watch_pid(int(match.group(1)), self.label, instance=instance, version=version, channel=channel, loader=loader)
             if capture=="versions" and hasattr(self,"version"):
                 vals=[]
                 for line in "".join(chunks).splitlines():vals+=re.findall(r"(?<!\w)(?:[cbra]?\d+(?:\.\d+){1,3}(?:[-._][\w.-]+)?|latest)(?!\w)",line,re.I)
@@ -811,61 +826,55 @@ class SettingsPage(QWidget):
         elif sys.platform=="darwin": subprocess.Popen(["open",str(ROOT)])
         else: subprocess.Popen(["xdg-open",str(ROOT)])
 
-class HomePage(QWidget):
-    def __init__(self, window):
-        super().__init__(); self.window=window;self.pool=QThreadPool.globalInstance();self.refresh_job=None
-        root=QVBoxLayout(self);root.setContentsMargins(36,28,36,28);root.setSpacing(18)
-        top=QHBoxLayout(); title=QLabel("HOME");title.setObjectName("heroTitle");top.addWidget(title);top.addStretch();self.refresh_button=QPushButton("REFRESH");self.refresh_button.setObjectName("secondary");self.refresh_button.clicked.connect(self.refresh);top.addWidget(self.refresh_button);root.addLayout(top)
-        self.summary=QLabel("JAVBED launcher overview");self.summary.setObjectName("small");root.addWidget(self.summary)
-        cards=QHBoxLayout()
-        self.games_card=self.card("GAMES");self.engines_card=self.card("ENGINES");self.servers_card=self.card("SERVERS");cards.addWidget(self.games_card[0]);cards.addWidget(self.engines_card[0]);cards.addWidget(self.servers_card[0]);root.addLayout(cards)
-        quick=QFrame();quick.setObjectName("hero");q=QVBoxLayout(quick);qt=QLabel("QUICK LAUNCH");qt.setObjectName("game");q.addWidget(qt);row=QHBoxLayout()
-        for label in ("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode"):
-            b=QPushButton(label);b.setObjectName("secondary")
-            b.clicked.connect(lambda checked=False,name=label:self.quick_launch(name));row.addWidget(b)
-        q.addLayout(row);root.addWidget(quick)
-        self.details=QPlainTextEdit();self.details.setReadOnly(True);self.details.setMaximumHeight(190);root.addWidget(self.details);root.addStretch();QTimer.singleShot(500,self.refresh)
-    def card(self,title):
-        frame=QFrame();frame.setObjectName("hero");layout=QVBoxLayout(frame);head=QLabel(title);head.setObjectName("small");value=QLabel("…");value.setObjectName("game");layout.addWidget(head);layout.addWidget(value);return frame,value
-    def quick_launch(self,name):
-        if name=="Story Mode":
-            page=self.window.story_page
-            if not page.detect() and page.detect(1-page.season.currentIndex()):
-                page.season.setCurrentIndex(1-page.season.currentIndex())
-            if page.detect():
-                page.launch()
-                return
-        self.window.select_name(name)
-    def refresh(self):
-        if self.refresh_job:return
-        self.refresh_button.setEnabled(False);self.summary.setText("Checking your games...")
-        job=Job(home_snapshot);self.refresh_job=job
-        def done(ok,result):
-            self.refresh_job=None;self.refresh_button.setEnabled(True)
-            if not ok:self.summary.setText("Could not refresh: "+str(result));return
-            installed,statuses,server_count,server_text=result
-            self.summary.setText("Your Minecraft games and editions")
-            self.games_card[1].setText(f"{len(installed)}/8 configured")
-            healthy=sum(1 for _,path,_ in statuses if path);self.engines_card[1].setText(f"{healthy}/{len(statuses)} ready")
-            self.servers_card[1].setText(f"{server_count} configured" if server_count is not None else "Unavailable")
-            engine_lines=[f"{label}: {path or 'not configured'}" for label,path,_ in statuses]
-            self.details.setPlainText("Detected launch targets: "+(", ".join(installed) if installed else "none")+"\n\n"+server_text+"\n\n" + "\n".join(engine_lines))
-        job.signals.done.connect(done);self.pool.start(job)
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620)
         root=QWidget();layout=QHBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
-        account=QFrame();account.setObjectName("account");a=QVBoxLayout(account);name=QLabel("JAVBED");name.setObjectName("logo");sub=QLabel("Universal Minecraft launcher");sub.setObjectName("small");a.addWidget(name);a.addWidget(sub);r.addWidget(account)
+        account=QFrame();account.setObjectName("account");a=QVBoxLayout(account)
+        name=QLabel("JAVBED");name.setObjectName("logo");a.addWidget(name)
+        self.account_button=QPushButton("No Java account  ▾")
+        self.account_button.setObjectName("secondary")
+        self.account_button.clicked.connect(self.show_account_menu)
+        a.addWidget(self.account_button)
+        r.addWidget(account)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
         entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Servers","Updates","Settings")
         for i,label in enumerate(entries):
             display=label.upper() if label in ("Home","Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
             b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
-            page=HomePage(self) if label=="Home" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label)))));self.pages.append(page);self.stack.addWidget(page)
+            page=HomePage(self, home_snapshot) if label=="Home" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label)))));self.pages.append(page);self.stack.addWidget(page)
+            if label=="Java":self.java_page=page
             if label=="Story Mode":self.story_page=page
         r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)
+    def update_account(self, account, avatar):
+        self.account_button.setText((account["username"] + "  ▾") if account else "No Java account  ▾")
+        self.account_button.setIcon(QIcon(avatar) if avatar else QIcon())
+    def open_accounts(self):
+        self.select_name("Java")
+        self.java_page.switch_view("accounts")
+    def show_account_menu(self):
+        from .accounts import accounts
+        active, rows = accounts()
+        menu = QMenu(self)
+        for row in rows:
+            alias = row["alias"]
+            action = menu.addAction(("✓ " if alias == active else "") + row["username"] + " (" + alias + ")")
+            action.triggered.connect(lambda checked=False, value=alias: self.switch_account(value))
+        if rows:
+            menu.addSeparator()
+        menu.addAction("Add Account", self.open_accounts)
+        menu.addAction("Refresh Account", self.refresh_active_account)
+        menu.addAction("Account Manager", self.open_accounts)
+        menu.exec(self.account_button.mapToGlobal(self.account_button.rect().bottomLeft()))
+    def switch_account(self, alias):
+        self.java_page.run(["account", "use", alias], target=self.java_page.account_output)
+        if self.java_page.proc:
+            self.java_page.proc.finished.connect(lambda *_: self.pages[0].refresh())
+    def refresh_active_account(self):
+        self.java_page.run(["account", "refresh"], target=self.java_page.account_output)
+        if self.java_page.proc:
+            self.java_page.proc.finished.connect(lambda *_: self.pages[0].refresh())
     def refresh_all(self):
         for p in self.pages:
             if isinstance(p,GamePage):p.startup_refresh()
@@ -876,6 +885,8 @@ class MainWindow(QMainWindow):
     def select(self,i):
         self.stack.setCurrentIndex(i)
         for n,b in enumerate(self.buttons):b.setChecked(n==i)
+        if i == 0 and self.pages:
+            self.pages[0].refresh()
     def closeEvent(self,event):
         if hasattr(self,"story_page") and self.story_page.download_job:
             self.story_page.download_job.cancelled.set()

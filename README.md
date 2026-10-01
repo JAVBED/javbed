@@ -27,6 +27,8 @@ If Dungeons, Dungeons II, or Legends is not detected, use **Locate Game** on its
 
 Engine updates run in the background and verify the SHA-256 digest supplied with each GitHub release asset before installing it.
 
+The Home dashboard shows the active JAVLI account, recent play sessions, quick launch targets, detected games, and SERVLI status. JAVBED reads only public profile fields from JAVLI's account data and uses JAVLI for sign-in and account switching. Game sessions lasting at least ten seconds are saved to JAVBED's `history.json` when the launched process can be observed. A skin avatar is fetched from Crafatar when the account has a Minecraft UUID.
+
 ## Releases
 
-Push a semantic version tag such as `v0.1.0` to build and publish the platform packages, or start the release workflow manually. Pushes to `main` and pull requests run the test workflow.
+Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.
