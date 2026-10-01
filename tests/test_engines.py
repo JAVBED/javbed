@@ -18,14 +18,17 @@ class EngineTests(unittest.TestCase):
     def test_explicit_path_then_path_then_managed_engine(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            managed = root / "engines" / "javli" / "javli.exe"
+            executable = "javli.exe" if os.name == "nt" else "javli"
+            managed = root / "engines" / "javli" / executable
             managed.parent.mkdir(parents=True)
             managed.touch()
-            unrelated = root / "path" / "javli.exe"
+            unrelated = root / "path" / executable
             unrelated.parent.mkdir()
             unrelated.touch()
+            managed.chmod(0o755)
+            unrelated.chmod(0o755)
             engine = engines.Engine("Java", "javli", "javli")
-            with patch.object(engines, "ENGINE_ROOT", root / "engines"), patch.object(engines.platform, "system", return_value="Windows"), patch.dict(os.environ, {"PATH": str(unrelated.parent), "JAVBED_JAVA": ""}):
+            with patch.object(engines, "ENGINE_ROOT", root / "engines"), patch.dict(os.environ, {"PATH": str(unrelated.parent), "JAVBED_JAVA": ""}):
                 self.assertEqual(engine.locate(), unrelated)
                 os.environ["JAVBED_JAVA"] = str(managed)
                 self.assertEqual(engine.locate(), managed)
