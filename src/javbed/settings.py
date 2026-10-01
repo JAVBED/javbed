@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(os.getenv("LOCALAPPDATA") or (Path.home()/".local"/"share"))/"JAVBED"
 FILE = ROOT/"settings.json"
+_applied_env = set()
 DEFAULTS = {
     "java_memory_mb": 4096,
     "resolution_width": 1280,
@@ -21,6 +22,9 @@ DEFAULTS = {
     "engine_servers": "",
     "story_mode_s1_path": "",
     "story_mode_s2_path": "",
+    "game_dungeons_path": "",
+    "game_dungeons2_path": "",
+    "game_legends_path": "",
 }
 def load():
     data=dict(DEFAULTS)
@@ -34,6 +38,16 @@ def apply_environment(data):
     mapping={"engine_java":"JAVBED_JAVA","engine_bedrock":"JAVBED_BEDROCK","engine_edu":"JAVBED_EDU","engine_lce":"JAVBED_LCE","engine_servers":"JAVBED_SERVERS"}
     for key,env in mapping.items():
         value=str(data.get(key,"")).strip()
-        if value:os.environ[env]=value
+        if value:
+            os.environ[env]=value
+            _applied_env.add(env)
+        elif env in _applied_env:
+            os.environ.pop(env,None)
+            _applied_env.remove(env)
     key=str(data.get("curseforge_api_key","")).strip()
-    if key:os.environ["CURSEFORGE_API_KEY"]=key
+    if key:
+        os.environ["CURSEFORGE_API_KEY"]=key
+        _applied_env.add("CURSEFORGE_API_KEY")
+    elif "CURSEFORGE_API_KEY" in _applied_env:
+        os.environ.pop("CURSEFORGE_API_KEY",None)
+        _applied_env.remove("CURSEFORGE_API_KEY")

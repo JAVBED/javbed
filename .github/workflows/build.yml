@@ -1,6 +1,9 @@
 name: Build and Release JAVBED
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -27,7 +30,9 @@ jobs:
         env:
           REQUESTED: ${{ inputs.version }}
         run: |
-          if [ -n "$REQUESTED" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            TAG="$GITHUB_REF_NAME"
+          elif [ -n "$REQUESTED" ]; then
             TAG="$REQUESTED"
             [[ "$TAG" == v* ]] || TAG="v$TAG"
           else
@@ -42,7 +47,11 @@ jobs:
               exit 1
             fi
           fi
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" != "push" ] && git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG already exists."
             exit 1
           fi
@@ -50,6 +59,7 @@ jobs:
           echo "Release tag: $TAG"
 
       - name: Create and push tag
+        if: github.event_name == 'workflow_dispatch'
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -92,8 +102,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e . "pyinstaller>=6,<7"
 
+      - name: Embed release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          python -c "import os; from pathlib import Path; Path('src/javbed/__init__.py').write_text('__version__ = ' + repr(os.environ['RELEASE_TAG'][1:]) + '\n', encoding='utf-8')"
+
       - name: Validate Python sources
         run: python -m compileall -q src javbed_main.py
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
 
       - name: Build Windows Store helper
         if: runner.os == 'Windows'

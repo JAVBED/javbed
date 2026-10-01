@@ -2,7 +2,7 @@
 
 PySide6 desktop launcher for Java, Bedrock, Education, Legacy Console and Minecraft servers.
 
-JAVBED manages its own backend engines. It downloads compatible release binaries from the JAVBED GitHub organization into its private application-data directory instead of relying on similarly named executables on PATH.
+JAVBED manages its own backend engines. It downloads compatible release binaries from the JAVBED GitHub organization into its private application-data directory. A path explicitly chosen in Settings takes priority over a managed engine; unrelated executables on PATH are ignored.
 
 ## Run from source
 
@@ -21,6 +21,12 @@ Or set up the environment manually:
 
 On macOS/Linux use `source .venv/bin/activate`.
 
+## Finding games
+
+If Dungeons, Dungeons II, or Legends is not detected, use **Locate Game** on its page to select the installed executable. Story Mode has a separate **Locate Installation** control for each season. Its ISO download can be paused and resumed by choosing the same save path again.
+
+Engine updates run in the background and verify the SHA-256 digest supplied with each GitHub release asset before installing it.
+
 ## Releases
 
-The GitHub Actions release workflow runs only for version tags matching `v*`. Push a tag such as `v0.1.0` to build and publish the platform packages.
+Push a semantic version tag such as `v0.1.0` to build and publish the platform packages, or start the release workflow manually. Pushes to `main` and pull requests run the test workflow.

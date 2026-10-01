@@ -1,16 +1,17 @@
 from __future__ import annotations
 import json
+import hashlib
 import os
 import platform
+import re
 import shutil
 import stat
-import subprocess
 import tarfile
 import tempfile
 import urllib.request
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT = Path(os.getenv("LOCALAPPDATA") or (Path.home() / ".local" / "share")) / "JAVBED"
 ENGINE_ROOT = ROOT / "engines"
@@ -23,29 +24,32 @@ def _platform_tokens():
     arch = ("arm64", "aarch64") if machine in ("arm64", "aarch64") else ("x64", "x86_64", "amd64")
     return os_tokens, arch
 
-def _windows_candidates(binary):
-    names = (binary, binary + ".exe", binary + ".cmd", binary + ".bat")
-    for name in names:
-        found = shutil.which(name)
-        if found:
-            yield Path(found)
-    roots = [
-        Path(os.getenv("LOCALAPPDATA", "")) / "Programs",
-        Path(os.getenv("LOCALAPPDATA", "")) / "Microsoft" / "WindowsApps",
-        Path(os.getenv("APPDATA", "")) / "Python",
-        Path.home() / ".local" / "bin",
-    ]
-    for root in roots:
-        if not root.exists():
-            continue
-        patterns = [binary + ".exe", binary + ".cmd", binary + ".bat"]
-        for pattern in patterns:
-            try:
-                for path in root.rglob(pattern):
-                    if path.is_file():
-                        yield path
-            except OSError:
-                pass
+def _safe_member(name):
+    path = PurePosixPath(name.replace("\\", "/"))
+    if not path.parts:
+        return
+    if path.is_absolute() or ".." in path.parts or ":" in path.parts[0]:
+        raise ValueError(f"Unsafe archive path: {name}")
+
+
+def _extract_archive(package, destination):
+    name = package.name.lower()
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(package) as archive:
+            for item in archive.infolist():
+                _safe_member(item.filename)
+                if stat.S_ISLNK(item.external_attr >> 16):
+                    raise ValueError(f"Archive link is not allowed: {item.filename}")
+            archive.extractall(destination)
+    elif name.endswith((".tar.gz", ".tgz")):
+        with tarfile.open(package, "r:gz") as archive:
+            for item in archive.getmembers():
+                _safe_member(item.name)
+                if not (item.isfile() or item.isdir()):
+                    raise ValueError(f"Archive link or special file is not allowed: {item.name}")
+            archive.extractall(destination)
+    else:
+        raise ValueError(f"Unsupported archive: {package.name}")
 
 @dataclass(frozen=True)
 class Engine:
@@ -63,22 +67,14 @@ class Engine:
 
     def locate(self):
         override = os.getenv("JAVBED_" + self.label.upper().replace(" ", "_"))
-        if override and Path(override).exists():
+        if override and Path(override).is_file():
             return Path(override)
-        if platform.system() == "Windows":
-            found = next(_windows_candidates(self.binary), None)
-            if found:
-                return found
-        else:
-            found = shutil.which(self.binary)
-            if found:
-                return Path(found)
-        return self.executable if self.executable.exists() else None
+        return self.executable if self.executable.is_file() else None
 
     def command(self, *args):
         exe = self.locate()
         if not exe:
-            return None, f"{self.label} engine is not installed or visible to JAVBED."
+            return None, f"{self.label} engine is not configured. Install it or choose its path in Settings."
         if platform.system() == "Windows" and exe.suffix.lower() in (".cmd", ".bat"):
             return ["cmd.exe", "/d", "/c", str(exe), *args], None
         return [str(exe), *args], None
@@ -105,25 +101,40 @@ class Engine:
         if progress:
             progress(f"Downloading {name}...")
         with tempfile.TemporaryDirectory() as td:
-            package = Path(td) / name
-            urllib.request.urlretrieve(url, package)
-            if name.lower().endswith(".zip"):
-                with zipfile.ZipFile(package) as archive:
-                    archive.extractall(self.directory)
-            elif name.lower().endswith((".tar.gz", ".tgz")):
-                with tarfile.open(package, "r:gz") as archive:
-                    archive.extractall(self.directory)
+            temporary = Path(td)
+            package = temporary / Path(name).name
+            digest = hashlib.sha256()
+            with urllib.request.urlopen(url, timeout=60) as response, package.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    output.write(chunk)
+                    digest.update(chunk)
+            expected_digest = asset.get("digest", "")
+            if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", expected_digest):
+                raise RuntimeError(f"Release asset {name} has no SHA-256 digest.")
+            if digest.hexdigest() != expected_digest[7:].lower():
+                raise RuntimeError(f"Checksum mismatch for {name}.")
+            staging = temporary / "staging"
+            staging.mkdir()
+            if name.lower().endswith((".zip", ".tar.gz", ".tgz")):
+                _extract_archive(package, staging)
             else:
-                shutil.copy2(package, self.executable)
-        if not self.executable.exists():
+                shutil.copy2(package, staging / self.executable.name)
             expected = (self.binary.lower(), self.binary.lower() + ".exe")
-            found = next((p for p in self.directory.rglob("*") if p.is_file() and p.name.lower() in expected), None)
-            if found and found != self.executable:
-                shutil.copy2(found, self.executable)
-        if not self.executable.exists():
-            raise RuntimeError(f"Downloaded release but could not find {self.binary} executable.")
-        if platform.system() != "Windows":
-            self.executable.chmod(self.executable.stat().st_mode | stat.S_IEXEC)
+            found = next((p for p in staging.rglob("*") if p.is_file() and p.name.lower() in expected), None)
+            if not found:
+                raise RuntimeError(f"Downloaded release but could not find {self.binary} executable.")
+            for source in staging.rglob("*"):
+                target = self.directory / source.relative_to(staging)
+                if source.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif source != found:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+            replacement = self.executable.with_name(self.executable.name + ".new")
+            shutil.copy2(found, replacement)
+            if platform.system() != "Windows":
+                replacement.chmod(replacement.stat().st_mode | stat.S_IEXEC)
+            os.replace(replacement, self.executable)
         (self.directory / "release.json").write_text(json.dumps({"tag": release.get("tag_name"), "asset": name}, indent=2), encoding="utf-8")
         return release.get("tag_name") or "latest"
 
