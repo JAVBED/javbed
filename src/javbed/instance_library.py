@@ -12,11 +12,9 @@ from PySide6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget, QWizard, QWizardPage,
 )
 
-from .instances import get_instance, remove_preferences, save_icon, save_preferences, snapshot, valid_name
-from . import content_registry
-from .packages import export_package, load_package, restore_icon
+from .instances import remove_preferences, save_icon, save_preferences, snapshot, valid_name
+from .packages import export_package
 from .jobs import Job
-from .launcher_imports import LauncherImportDialog, inspect as inspect_launcher
 
 
 class InstanceWizard(QWizard):
@@ -122,18 +120,6 @@ class InstanceLibrary(QWidget):
         create.setObjectName("play")
         create.clicked.connect(self.create_instance)
         header.addWidget(create)
-        import_button = QPushButton("IMPORT INSTANCE")
-        import_button.setObjectName("secondary")
-        import_button.clicked.connect(self.import_instance)
-        header.addWidget(import_button)
-        other_button = QPushButton("IMPORT OTHER LAUNCHERS")
-        other_button.setObjectName("secondary")
-        other_button.clicked.connect(self.import_other_launchers)
-        header.addWidget(other_button)
-        portable_button = QPushButton("IMPORT .JAVBED")
-        portable_button.setObjectName("secondary")
-        portable_button.clicked.connect(self.import_portable)
-        header.addWidget(portable_button)
         refresh = QPushButton("REFRESH")
         refresh.setObjectName("secondary")
         refresh.clicked.connect(self.refresh)
@@ -174,7 +160,7 @@ class InstanceLibrary(QWidget):
             item = self.list_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        self.status.setText(f"{len(rows)} JAVLI instance{'s' if len(rows) != 1 else ''}" if rows else "No instances yet. Create or import one.")
+        self.status.setText(f"{len(rows)} JAVLI instance{'s' if len(rows) != 1 else ''}" if rows else "No instances yet. Create one to get started.")
         for item in rows:
             self.list_layout.insertWidget(self.list_layout.count() - 1, self.card(item))
 
@@ -243,58 +229,6 @@ class InstanceLibrary(QWidget):
                 save_icon(values["name"], Path(values["icon"]))
 
         self.run(args, save_options)
-
-    def import_instance(self):
-        path = QFileDialog.getExistingDirectory(self, "Import existing Minecraft instance")
-        if not path:
-            return
-        job = Job(lambda: inspect_launcher(Path(path)))
-        self.status.setText("Inspecting instance...")
-
-        def inspected(ok, item):
-            if not ok or not item:
-                self.status.setText("This folder is not a supported launcher instance.")
-                return
-            name, accepted = QInputDialog.getText(self, "Import Instance", "New instance name", text=item.name)
-            if not accepted:
-                return
-            name = name.strip()
-            if not valid_name(name) or get_instance(name):
-                self.status.setText("Choose a unique valid instance name.")
-                return
-            version, accepted = QInputDialog.getText(self, "Import Instance", "Minecraft version", text=item.version)
-            if not accepted or not version.strip():
-                return
-            self.run(["instance", "import", path, "--name", name, "--version", version.strip(), "--data-only"])
-
-        job.signals.done.connect(inspected)
-        self.pool.start(job)
-
-    def import_other_launchers(self):
-        dialog = LauncherImportDialog(self)
-        if not dialog.exec():
-            return
-        queue = dialog.selected()
-        failures = []
-
-        def next_item():
-            if not queue:
-                self.status.setText(("Launcher imports finished with failures: " + ", ".join(failures)) if failures else "Launcher imports finished. Originals were not modified.")
-                self.refresh()
-                return
-            candidate, name, version = queue.pop(0)
-            self.status.setText("Importing " + candidate.name + "...")
-            args = ["instance", "import", str(candidate.path), "--name", name, "--version", version, "--data-only"]
-
-            def finished(ok, output):
-                if not ok:
-                    failures.append(name)
-                    self.status.setText("Import failed for " + name + ": " + output.strip()[-180:])
-                next_item()
-
-            self.run_command(args, finished)
-
-        next_item()
 
     def show_menu(self, button, item):
         menu = QMenu(self)
@@ -381,92 +315,4 @@ class InstanceLibrary(QWidget):
             self.status.setText(("Exported " + str(result)) if ok else ("Export failed: " + str(result)))
 
         job.signals.done.connect(done)
-        self.pool.start(job)
-
-    def import_portable(self, path=""):
-        if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "Import JAVBED Instance", "", "JAVBED packages (*.javbed)")
-        if not path:
-            return
-        job = Job(lambda: load_package(Path(path)))
-        self.status.setText("Reading instance package...")
-
-        def loaded(ok, result):
-            if not ok:
-                self.status.setText("Import failed: " + str(result))
-                return
-            manifest, icon = result
-            name, accepted = QInputDialog.getText(self, "Import Instance", "New instance name", text=manifest["name"])
-            if not accepted:
-                return
-            name = name.strip()
-            if not valid_name(name) or get_instance(name):
-                self.status.setText("Choose a unique valid instance name.")
-                return
-            minecraft = manifest["minecraft"]
-            command = ["instance", "create", name, minecraft.get("type", "release"), minecraft["version"]]
-            if minecraft.get("loader") and minecraft["loader"] != "vanilla":
-                command += ["--loader", minecraft["loader"]]
-                if minecraft.get("loader_version"):
-                    command += ["--loader-version", minecraft["loader_version"]]
-
-            def created(success, output):
-                if not success:
-                    self.status.setText("Instance creation failed: " + output.strip()[-180:])
-                    return
-                pref = dict(manifest.get("settings") or {})
-                if manifest.get("modpack"):
-                    pref["modpack"] = manifest["modpack"]
-                icon_path = restore_icon(name, manifest, icon)
-                if icon_path:
-                    pref["icon"] = str(icon_path)
-                save_preferences(name, pref)
-                commands = []
-                modpack = manifest.get("modpack") or {}
-                if modpack.get("project"):
-                    args = ["modpack", "install", str(modpack["project"]), "--instance", name]
-                    if modpack.get("provider") == "curseforge":
-                        args += ["--provider", "curseforge", "--file-id", str(modpack.get("version_id", ""))]
-                    elif modpack.get("version_id"):
-                        args += ["--version-id", str(modpack["version_id"])]
-                    commands.append((args, None))
-                for row in manifest["content"]:
-                    kind = row["kind"]
-                    args = [("mods" if kind == "mod" else kind), "install", str(row["project"]), "--instance", name]
-                    if kind == "mod":
-                        args += ["--minecraft", minecraft["version"]]
-                        if minecraft.get("loader") and minecraft["loader"] != "vanilla":
-                            args += ["--loader", minecraft["loader"]]
-                    if row["provider"] == "curseforge":
-                        args += ["--provider", "curseforge"]
-                        if row.get("version_id"):
-                            args += ["--file-id", str(row["version_id"])]
-                    elif row.get("version_id"):
-                        args += ["--version-id", str(row["version_id"])]
-                    commands.append((args, row))
-
-                def next_command():
-                    if not commands:
-                        missing = len(manifest.get("untracked") or [])
-                        self.status.setText("Imported " + name + (f". {missing} local files were not included." if missing else "."))
-                        self.refresh()
-                        return
-                    args, row = commands.pop(0)
-                    self.status.setText("Installing package content: " + args[2])
-
-                    def installed(done_ok, details):
-                        if not done_ok:
-                            self.status.setText("Import paused at " + args[2] + ": " + details.strip()[-180:])
-                            return
-                        if row:
-                            content_registry.upsert({"instance": name, **row})
-                        next_command()
-
-                    self.run_command(args, installed)
-
-                next_command()
-
-            self.run_command(command, created)
-
-        job.signals.done.connect(loaded)
         self.pool.start(job)

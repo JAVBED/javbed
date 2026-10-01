@@ -270,17 +270,6 @@ def unique_world_name(root: Path, suggestion: str) -> str:
     return name
 
 
-def import_world(archive_path: Path, root: Path, suggestion: str = "") -> Path:
-    root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".world-import-", dir=root) as staging_name:
-        candidate = _extract_world(archive_path, Path(staging_name))
-        destination = root / unique_world_name(root, suggestion or archive_path.stem)
-        if destination.resolve().parent != root.resolve():
-            raise ValueError("Unsafe world import destination.")
-        candidate.rename(destination)
-    return destination
-
-
 def duplicate_world(world: World) -> Path:
     _check_world(world)
     destination = world.root / unique_world_name(world.root, world.name + " Copy")

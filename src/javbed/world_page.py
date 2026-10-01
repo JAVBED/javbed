@@ -7,12 +7,12 @@ from pathlib import Path
 
 from PySide6.QtCore import QThreadPool, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
-from PySide6.QtWidgets import (QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from .jobs import Job
-from .worlds import (available_roots, backup_world, discover_worlds, duplicate_world,
-                     export_world, import_world, restore_world, trash_world)
+from .worlds import (backup_world, discover_worlds, duplicate_world,
+                     export_world, restore_world, trash_world)
 
 
 class WorldPage(QWidget):
@@ -29,11 +29,10 @@ class WorldPage(QWidget):
         title.setObjectName("heroTitle")
         header.addWidget(title)
         header.addStretch()
-        for label, action in (("IMPORT WORLD ZIP", self.import_zip), ("REFRESH", self.refresh)):
-            button = QPushButton(label)
-            button.setObjectName("secondary")
-            button.clicked.connect(action)
-            header.addWidget(button)
+        refresh = QPushButton("REFRESH")
+        refresh.setObjectName("secondary")
+        refresh.clicked.connect(self.refresh)
+        header.addWidget(refresh)
         root.addLayout(header)
         self.status = QLabel("Scanning worlds...")
         root.addWidget(self.status)
@@ -118,19 +117,6 @@ class WorldPage(QWidget):
 
     def operate(self, label, function):
         self.work(label, function, lambda _: self.refresh())
-
-    def import_zip(self, path=""):
-        if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "Import Minecraft world", "", "ZIP archives (*.zip)")
-        if not path:
-            return
-        roots = [(edition, instance, root) for edition, instance, root in available_roots()]
-        options = [f"{edition} {instance or 'Vanilla'} — {root}" for edition, instance, root in roots]
-        from PySide6.QtWidgets import QInputDialog
-        choice, ok = QInputDialog.getItem(self, "Import world", "Destination", options, 0, False)
-        if ok:
-            root = roots[options.index(choice)][2]
-            self.operate("Importing world...", lambda: import_world(Path(path), root))
 
     def export(self, world):
         path, _ = QFileDialog.getSaveFileName(self, "Export world", world.name + ".zip", "ZIP archives (*.zip)")

@@ -21,12 +21,13 @@ class AppearanceOnboardingTests(unittest.TestCase):
         self.assertFalse(center.post("download:one", "Complete again"))
         self.assertEqual(messages, ["Complete"])
 
-    def test_first_run_snapshot_collects_existing_installations(self):
+    def test_first_run_snapshot_collects_games_and_instances(self):
         home = lambda: (["Java"], [("Java", "javli", "v1")], 1, 0, "", None, "", [])
-        with patch("javbed.onboarding.list_instances", return_value=[{"name": "survival"}]), patch("javbed.onboarding.discover", return_value=[]):
+        with patch("javbed.onboarding.list_instances", return_value=[{"name": "survival"}]):
             result = first_run_snapshot(home)
         self.assertEqual(result[0], ["Java"])
         self.assertEqual(result[4][0]["name"], "survival")
+        self.assertEqual(len(result), 6)
 
 
 if __name__ == "__main__":

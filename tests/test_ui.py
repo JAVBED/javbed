@@ -9,7 +9,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 from javbed.app import ExtraPage, MainWindow, SettingsPage, UpdatesPage
 from javbed.instance_library import InstanceWizard
 from javbed import settings
@@ -69,6 +69,8 @@ class UiTests(unittest.TestCase):
             window.select_name("Java")
             window.java_page.switch_view("instances")
             self.assertTrue(window.java_page.instances_panel.isVisible())
+            instance_buttons = [button.text() for button in window.java_page.instances_panel.findChildren(QPushButton)]
+            self.assertFalse(any("IMPORT" in label for label in instance_buttons))
             window.java_page.switch_view("mods")
             self.assertTrue(window.java_page.mods_panel.isVisible())
             window.java_page.switch_view("resources")
@@ -82,6 +84,8 @@ class UiTests(unittest.TestCase):
             server_page.switch_view("dashboard")
             self.assertTrue(server_page.server_dashboard.isVisible())
             self.assertEqual(server_page.server_dashboard.tabs.count(), 8)
+            world_buttons = [button.text() for button in window.pages[9].findChildren(QPushButton)]
+            self.assertFalse(any("IMPORT" in label for label in world_buttons))
             window.open_deep_link("javbed://java/1.21.1")
             self.assertEqual(window.java_page.version.currentText(), "1.21.1")
             window.open_deep_link("javbed://settings")

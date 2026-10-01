@@ -1155,11 +1155,7 @@ class MainWindow(QMainWindow):
         dialog=OnboardingDialog(lambda:first_run_snapshot(home_snapshot),self)
         dialog.exec()
         current=load_settings();current["onboarding_complete"]=True;save_settings(current)
-        if dialog.action=="import":
-            self.select_name("Java")
-            self.java_page.switch_view("instances")
-            self.java_page.instances_panel.import_other_launchers()
-        elif dialog.action=="configure":
+        if dialog.action=="configure":
             self.select_name("Settings")
     def open_palette(self):
         CommandPalette(self).exec()
@@ -1267,7 +1263,7 @@ class MainWindow(QMainWindow):
             else:
                 page.run([page.version.currentText().strip()])
     def dragEnterEvent(self, event):
-        supported = {".jar", ".mrpack", ".javbed", ".zip", ".iso"}
+        supported = {".jar", ".mrpack", ".zip", ".iso"}
         if event.mimeData().hasUrls() and any(Path(url.toLocalFile()).suffix.lower() in supported for url in event.mimeData().urls() if url.isLocalFile()):
             event.acceptProposedAction()
 
@@ -1281,11 +1277,7 @@ class MainWindow(QMainWindow):
         if not source.is_file():
             return
         suffix = source.suffix.lower()
-        if suffix == ".javbed":
-            self.select_name("Java")
-            self.java_page.switch_view("instances")
-            self.java_page.instances_panel.import_portable(str(source))
-        elif suffix == ".mrpack":
+        if suffix == ".mrpack":
             self.select_name("Java")
             self.java_page.switch_view("modpacks")
             self.java_page.modpacks_panel.open_mrpack(str(source))
@@ -1293,13 +1285,9 @@ class MainWindow(QMainWindow):
             self.select_name("Story Mode")
             self.story_page.install_iso(str(source))
         elif suffix == ".zip":
-            choice, ok = QInputDialog.getItem(self, "Install ZIP", source.name + " is a:", ["World", "Resource pack", "Shader pack"], 0, False)
+            choice, ok = QInputDialog.getItem(self, "Install ZIP", source.name + " is a:", ["Resource pack", "Shader pack"], 0, False)
             if not ok:return
-            if choice == "World":
-                self.select_name("Worlds")
-                self.pages[self.stack.currentIndex()].import_zip(str(source))
-            else:
-                self.copy_addon(source, "resourcepacks" if choice == "Resource pack" else "shaderpacks")
+            self.copy_addon(source, "resourcepacks" if choice == "Resource pack" else "shaderpacks")
         elif suffix == ".jar":
             self.copy_addon(source, "mods")
 

@@ -5,7 +5,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from javbed.worlds import World, backup_world, duplicate_world, import_world, restore_world, trash_world
+from javbed.worlds import World, backup_world, duplicate_world, restore_world, trash_world
 from javbed import settings
 
 
@@ -33,16 +33,21 @@ class WorldTests(unittest.TestCase):
             finally:
                 settings.ROOT = original
 
-    def test_world_import_rejects_archive_traversal(self):
+    def test_world_restore_rejects_archive_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            folder = root / "saves" / "Survival"
+            folder.mkdir(parents=True)
+            (folder / "level.dat").write_bytes(b"original")
+            world = World("Survival", "Java", "", folder, folder.parent, "1.21", 0, 8, None)
             archive = root / "bad.zip"
             with zipfile.ZipFile(archive, "w") as output:
                 output.writestr("../escape.txt", "bad")
                 output.writestr("level.dat", "world")
             with self.assertRaises(ValueError):
-                import_world(archive, root / "saves")
+                restore_world(world, archive)
             self.assertFalse((root / "escape.txt").exists())
+            self.assertEqual((folder / "level.dat").read_bytes(), b"original")
 
 
 if __name__ == "__main__":
