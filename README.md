@@ -6,6 +6,14 @@ JAVBED manages its own backend engines. It downloads compatible release binaries
 
 ## Run from source
 
+Use the launcher for your system. It creates `.venv` and installs the project on first run:
+
+- Windows: double-click `start.bat`.
+- Linux: run `./start.sh`.
+- macOS: double-click `start.command`.
+
+Or set up the environment manually:
+
     python -m venv .venv
     .venv\\Scripts\\activate
     pip install -e .

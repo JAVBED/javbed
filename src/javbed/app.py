@@ -3,12 +3,12 @@ import os, re, shutil, subprocess, sys
 from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
 from .engines import ENGINES
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
-from .storymode import DOWNLOAD_URLS
+from .storymode import DOWNLOAD_URLS, download_iso
 from . import __version__
 
 STYLE="""QWidget{background:#211f1e;color:white;font-family:'Segoe UI'} QFrame#rail{background:#2b2928;border-right:1px solid #111} QFrame#account{background:#222120;border-bottom:1px solid #111} QLabel#logo{font-size:17px;font-weight:800} QLabel#small{font-size:11px;color:#bbb} QLabel#game{font-size:16px;font-weight:900} QFrame#topbar{background:#242221;border-bottom:1px solid #111} QPushButton#tab{background:transparent;border:0;padding:13px 10px;font-size:15px} QPushButton#tab:checked{border-bottom:3px solid #54a82f;font-weight:700} QPushButton#nav{text-align:left;background:#353231;border:1px solid #191817;padding:15px 13px;font-size:13px;font-weight:800} QPushButton#nav:hover{background:#413d3b} QPushButton#nav:checked{background:#4a4644;border-left:4px solid white} QFrame#hero{background:#171615;border:1px solid #111} QLabel#heroTitle{font-size:34px;font-weight:900} QLabel#heroSub{font-size:15px;color:#ddd} QFrame#playbar{background:#292725;border-top:1px solid #111;border-bottom:1px solid #111} QPushButton#play{background:#3c8527;border:3px solid #171717;padding:12px 65px;font-size:19px;font-weight:900} QPushButton#play:hover{background:#4c9b35} QPushButton#secondary{background:#353331;border:1px solid #666;padding:10px 14px;font-weight:700} QComboBox,QLineEdit{background:#262422;border:1px solid #666;padding:9px} QPlainTextEdit{background:#121212;border:1px solid #333;font-family:Consolas,monospace}"""
@@ -25,7 +25,7 @@ STORE_PRODUCTS = {
 GAME_FOLDER_NAMES = {
     "Dungeons": ("Minecraft Dungeons",),
     "Dungeons 2": ("Minecraft Dungeons II", "Minecraft Dungeons 2"),
-    "Legends": ("Minecraft Legends",),
+    "Legends": ("Minecraft Legends", "Minecraft Legends - Windows"),
 }
 
 
@@ -60,6 +60,20 @@ class Job(QRunnable):
         try:self.signals.done.emit(True,str(self.fn()))
         except Exception as e:self.signals.done.emit(False,str(e))
 
+class DownloadSignals(QObject):
+    progress = Signal(object, object)
+    done = Signal(bool, str)
+
+class DownloadJob(QRunnable):
+    def __init__(self, url, destination):
+        super().__init__();self.url=url;self.destination=destination;self.signals=DownloadSignals()
+    def run(self):
+        try:
+            download_iso(self.url,self.destination,self.signals.progress.emit)
+            self.signals.done.emit(True,str(self.destination))
+        except Exception as exc:
+            self.signals.done.emit(False,str(exc))
+
 def find_game(label, names):
     for name in names:
         path = shutil.which(name)
@@ -74,7 +88,7 @@ def find_game(label, names):
     patterns = {
         "Dungeons": ("**/Dungeons.exe", "**/Dungeons-Win64-Shipping.exe", "**/MinecraftDungeons.exe"),
         "Dungeons 2": ("**/Dungeons2*.exe", "**/DungeonsII*.exe", "**/MinecraftDungeons2*.exe"),
-        "Legends": ("**/MinecraftLegends.exe", "**/MinecraftLegends*.exe"),
+        "Legends": ("**/MinecraftLegends.Windows.exe", "**/MinecraftLegends.exe", "**/MinecraftLegends*.exe"),
     }.get(label, ())
     for root in candidates:
         if not root.exists(): continue
@@ -177,23 +191,27 @@ class ExtraPage(QWidget):
 
 class StoryModePage(QWidget):
     def __init__(self):
-        super().__init__();self.paths=load_settings();root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
+        super().__init__();self.paths=load_settings();self.pool=QThreadPool.globalInstance();root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
         top=QFrame();top.setObjectName("topbar");tl=QHBoxLayout(top);tl.setContentsMargins(18,5,18,5);tl.addWidget(QLabel("Story Mode"));tl.addStretch();root.addWidget(top)
         self.hero=HeroArt("Story Mode");root.addWidget(self.hero,1)
         bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8)
         self.season=QComboBox();self.season.addItems(["Season 1","Season 2"]);self.season.currentIndexChanged.connect(self.refresh);b.addWidget(self.season)
         self.state=QLabel();b.addWidget(self.state);b.addStretch()
         locate=QPushButton("LOCATE INSTALLATION");locate.setObjectName("secondary");locate.clicked.connect(self.locate);b.addWidget(locate)
+        self.download=QPushButton("DOWNLOAD ISO");self.download.setObjectName("secondary");self.download.clicked.connect(self.download_selected);b.addWidget(self.download)
         iso=QPushButton("INSTALL FROM ISO");iso.setObjectName("secondary");iso.clicked.connect(self.install_iso);b.addWidget(iso)
-        self.play=QPushButton("PLAY");self.play.setObjectName("play");self.play.clicked.connect(self.launch);b.addWidget(self.play);root.addWidget(bar);self.refresh()
+        self.play=QPushButton("PLAY");self.play.setObjectName("play");self.play.clicked.connect(self.launch);b.addWidget(self.play);root.addWidget(bar)
+        self.progress=QProgressBar();self.progress.setRange(0,100);self.progress.hide();root.addWidget(self.progress);self.refresh()
     def key(self):return "story_mode_s1_path" if self.season.currentIndex()==0 else "story_mode_s2_path"
     def title(self):return "Story Mode" if self.season.currentIndex()==0 else "Story Mode 2"
-    def detect(self):
-        saved=str(self.paths.get(self.key(),"")).strip()
+    def detect(self, season_index=None):
+        index=self.season.currentIndex() if season_index is None else season_index
+        key="story_mode_s1_path" if index==0 else "story_mode_s2_path"
+        saved=str(self.paths.get(key,"")).strip()
         if saved and Path(saved).is_file():return Path(saved)
         if sys.platform=="win32":
             roots=[Path(os.getenv("ProgramFiles(x86)","C:/Program Files (x86)"))/"Steam"/"steamapps"/"common",Path(os.getenv("ProgramFiles","C:/Program Files"))]
-            names=("Minecraft Story Mode","Minecraft - Story Mode") if self.season.currentIndex()==0 else ("Minecraft Story Mode - Season Two","Minecraft Story Mode Season Two")
+            names=("Minecraft Story Mode","Minecraft - Story Mode") if index==0 else ("Minecraft Story Mode - Season Two","Minecraft Story Mode Season Two")
             for root in roots:
                 for name in names:
                     base=root/name
@@ -210,6 +228,30 @@ class StoryModePage(QWidget):
     def launch(self):
         self.refresh()
         if self.target:subprocess.Popen([str(self.target)],cwd=str(self.target.parent))
+    def download_selected(self):
+        title=self.title();url=DOWNLOAD_URLS.get(title)
+        if not url:self.state.setText("No download URL configured for "+title+".");return
+        filename="Minecraft " + title + ".iso"
+        selected,_=QFileDialog.getSaveFileName(self,"Save "+title+" ISO",str(Path.home()/"Downloads"/filename),"ISO images (*.iso);;All files (*)")
+        if not selected:return
+        destination=Path(selected)
+        self.download.setEnabled(False);self.season.setEnabled(False)
+        self.progress.setRange(0,100);self.progress.setValue(0);self.progress.show()
+        self.state.setText("Downloading " + title + "...")
+        job=DownloadJob(url,destination);self.download_job=job
+        def on_progress(received,total):
+            if total:
+                percent=min(100,received*100//total)
+                self.progress.setRange(0,100);self.progress.setValue(percent)
+                self.state.setText(f"Downloading {title}: {percent}%")
+            else:
+                self.progress.setRange(0,0)
+                self.state.setText(f"Downloading {title}: {received//(1024*1024)} MB")
+        def on_done(ok,message):
+            self.download.setEnabled(True);self.season.setEnabled(True);self.progress.hide();self.download_job=None
+            self.state.setText(("Downloaded " + destination.name if ok else "Download failed: " + message[:140]))
+            if ok:self.state.setToolTip(message)
+        job.signals.progress.connect(on_progress);job.signals.done.connect(on_done);self.pool.start(job)
     def install_iso(self):
         if sys.platform!="win32":self.state.setText("ISO installation is currently Windows-only.");return
         iso,_=QFileDialog.getOpenFileName(self,"Select Story Mode ISO","","ISO images (*.iso);;All files (*)")
@@ -679,21 +721,32 @@ class HomePage(QWidget):
         cards=QHBoxLayout()
         self.games_card=self.card("GAMES");self.engines_card=self.card("ENGINES");self.servers_card=self.card("SERVERS");cards.addWidget(self.games_card[0]);cards.addWidget(self.engines_card[0]);cards.addWidget(self.servers_card[0]);root.addLayout(cards)
         quick=QFrame();quick.setObjectName("hero");q=QVBoxLayout(quick);qt=QLabel("QUICK LAUNCH");qt.setObjectName("game");q.addWidget(qt);row=QHBoxLayout()
-        for label in ("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Servers"):
-            b=QPushButton(label);b.setObjectName("secondary");b.clicked.connect(lambda checked=False,name=label:self.window.select_name(name));row.addWidget(b)
+        for label in ("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode"):
+            b=QPushButton(label);b.setObjectName("secondary")
+            b.clicked.connect(lambda checked=False,name=label:self.quick_launch(name));row.addWidget(b)
         q.addLayout(row);root.addWidget(quick)
         self.details=QPlainTextEdit();self.details.setReadOnly(True);self.details.setMaximumHeight(190);root.addWidget(self.details);root.addStretch();QTimer.singleShot(500,self.refresh)
     def card(self,title):
         frame=QFrame();frame.setObjectName("hero");layout=QVBoxLayout(frame);head=QLabel(title);head.setObjectName("small");value=QLabel("…");value.setObjectName("game");layout.addWidget(head);layout.addWidget(value);return frame,value
+    def quick_launch(self,name):
+        if name=="Story Mode":
+            page=self.window.story_page
+            if not page.detect() and page.detect(1-page.season.currentIndex()):
+                page.season.setCurrentIndex(1-page.season.currentIndex())
+            if page.detect():
+                page.launch()
+                return
+        self.window.select_name(name)
     def refresh(self):
         installed=[]
         for label in ("Dungeons","Dungeons 2","Legends"):
             if find_game(label,EXTRA_GAMES[label][0]):installed.append(label)
         core=[]
-        for label in ("Java","Bedrock","EDU","LCE","Servers"):
+        for label in ("Java","Bedrock","EDU","LCE"):
             if ENGINES[label].locate():core.append(label)
         installed=core+installed
-        self.games_card[1].setText(f"{len(installed)} available")
+        if any(self.window.story_page.detect(i) for i in (0,1)):installed.append("Story Mode")
+        self.games_card[1].setText(f"{len(installed)}/8 available")
         statuses=engine_status(); healthy=sum(1 for _,path,_ in statuses if path);self.engines_card[1].setText(f"{healthy}/{len(statuses)} ready")
         server_engine=ENGINES["Servers"];server_text="SERVLI unavailable";server_count="—"
         if server_engine.locate():
@@ -718,6 +771,7 @@ class MainWindow(QMainWindow):
             display = label.upper() if label in ("Home","Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
             b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
             page=HomePage(self) if label=="Home" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label)))));self.pages.append(page);self.stack.addWidget(page)
+            if label=="Story Mode":self.story_page=page
         r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)
     def refresh_all(self):
         for p in self.pages:
