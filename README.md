@@ -41,6 +41,8 @@ The Java instance menu includes **Play in Safe Mode**. JAVBED temporarily rename
 
 The **Servers → Dashboard** tab uses SERVLI's structured server and backup listings. Server cards show software, Minecraft version, status, PID, RAM, port, and uptime. Open a server's console or settings for live log output, commands, player moderation, common and advanced properties, backups, plugins, mods, and server folders. SERVLI owns server start, stop, restore, and backup operations. Backup schedules (30 minutes, hourly, every N hours, daily, or on stop) and retention run in SERVLI while the server is running, even after JAVBED closes. The current SERVLI source is needed for `--json` listings and scheduling.
 
+The **Activity** page shows downloads and backend jobs, including real byte progress and speed for Story Mode ISOs and managed engine downloads. Jobs without byte reporting show their current stage without an invented percentage. **Updates → UPDATE ALL** checks JAVBED, updates managed engines and tracked Java mods, reports newer compatible modpacks, and updates stopped SERVLI servers where the backend supports an in-place software update. Running servers and BDS version changes are skipped. The **Doctor** page checks network access, account metadata, engines, Java runtimes, paths, bundled artwork, writable data directories, Gaming Services on Windows, and a configured CurseForge API key. Missing engines can be installed from Doctor.
+
 ## Releases
 
 Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.

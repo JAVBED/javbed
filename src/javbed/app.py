@@ -7,7 +7,8 @@ from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, Q
 from .engines import ENGINES
 from . import history
 from .accounts import active_account, avatar_path
-from .instances import get_instance, launch_environment, managed_runtime_path, preferences as instance_preferences
+from .instances import get_instance, launch_environment, managed_runtime_path, preferences as instance_preferences, snapshot as instance_snapshot
+from . import content
 from .jobs import Job
 from .home import HomePage
 from .instance_library import InstanceLibrary
@@ -16,7 +17,9 @@ from .modpack_browser import ModpackBrowser
 from .world_page import WorldPage
 from . import safemode
 from .crashdoctor import diagnose
-from .servers import ServerDashboard
+from .servers import ServerDashboard, server_snapshot
+from .activity import ActivityManager, ActivityPage
+from .doctor_page import DoctorPage
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
@@ -89,20 +92,22 @@ class DownloadJob(QRunnable):
 
 class EngineUpdateSignals(QObject):
     progress=Signal(str)
-    done=Signal()
+    bytes_progress=Signal(str,int,object)
+    done=Signal(bool)
 
 class EngineUpdateJob(QRunnable):
     def __init__(self):
         super().__init__();self.signals=EngineUpdateSignals()
     def run(self):
+        success=True
         for label,engine in ENGINES.items():
             try:
                 self.signals.progress.emit("Updating "+label+"...")
-                try:message=label+": "+engine.install_latest()
-                except Exception as exc:message=label+" update failed: "+str(exc)
+                try:message=label+": "+engine.install_latest(download_progress=lambda received,total, name=label:self.signals.bytes_progress.emit(name,received,total))
+                except Exception as exc:message=label+" update failed: "+str(exc);success=False
                 self.signals.progress.emit(message)
             except RuntimeError:return
-        try:self.signals.done.emit()
+        try:self.signals.done.emit(success)
         except RuntimeError:pass
 
 def find_game(label, names):
@@ -286,8 +291,8 @@ class ExtraPage(QWidget):
 
 
 class StoryModePage(QWidget):
-    def __init__(self):
-        super().__init__();self.paths=load_settings();self.pool=QThreadPool.globalInstance();self.download_job=None;self.iso_job=None;root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
+    def __init__(self, activity=None):
+        super().__init__();self.activity=activity;self.paths=load_settings();self.pool=QThreadPool.globalInstance();self.download_job=None;self.iso_job=None;root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
         top=QFrame();top.setObjectName("topbar");tl=QHBoxLayout(top);tl.setContentsMargins(18,5,18,5);tl.addWidget(QLabel("Story Mode"));tl.addStretch();root.addWidget(top)
         self.hero=HeroArt("Story Mode");root.addWidget(self.hero,1)
         bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8)
@@ -328,7 +333,9 @@ class StoryModePage(QWidget):
         self.progress.setRange(0,100);self.progress.setValue(0);self.progress.show();self.cancel_download.show()
         self.state.setText("Downloading " + title + "...")
         job=DownloadJob(url,destination);self.download_job=job
+        activity_id=self.activity.begin(title+" ISO",url,"Downloading",job.cancelled.set) if self.activity else None
         def on_progress(received,total):
+            if activity_id:self.activity.progress(activity_id,received,total,"Downloading")
             if total:
                 percent=min(100,received*100//total)
                 self.progress.setRange(0,100);self.progress.setValue(percent)
@@ -337,6 +344,7 @@ class StoryModePage(QWidget):
                 self.progress.setRange(0,0)
                 self.state.setText(f"Downloading {title}: {received//(1024*1024)} MB")
         def on_done(ok,message):
+            if activity_id:self.activity.finish(activity_id,ok,"Downloaded" if ok else message[:180])
             self.download.setEnabled(True);self.season.setEnabled(True);self.progress.hide();self.cancel_download.hide();self.cancel_download.setEnabled(True);self.download_job=None
             self.state.setText(("Downloaded " + destination.name if ok else "Download failed: " + message[:140]))
             if ok:self.state.setToolTip(message)
@@ -363,8 +371,8 @@ class StoryModePage(QWidget):
 
 class GamePage(QWidget):
     game_ended = Signal(str, object)
-    def __init__(self,label):
-        super().__init__();self.label=label;self.engine=ENGINES[label];self.proc=None;self.pool=QThreadPool.globalInstance()
+    def __init__(self,label,activity=None):
+        super().__init__();self.label=label;self.activity=activity;self.engine=ENGINES[label];self.proc=None;self.pool=QThreadPool.globalInstance()
         self.safe_mode_active = set()
         self.game_ended.connect(self.on_game_ended)
         root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0);self.root=root;self.top=self.topbar();root.addWidget(self.top)
@@ -750,6 +758,8 @@ class GamePage(QWidget):
                 return
         if not quiet:(target or self.output).clear()
         proc=QProcess(self);self.proc=proc;proc.setProgram(cmd[0]);proc.setArguments(cmd[1:]);proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels);chunks=[]
+        tracked_action = bool(args) and (args[0] in ("mods", "modpack", "resourcepack", "shader", "java") and len(args)>1 and args[1] in ("install", "update") or args[0] in ("create", "update", "backup") or args[:2] == ["instance", "create"])
+        activity_id = self.activity.begin(" ".join(args[:3]), self.label, "Running backend", None) if self.activity and tracked_action else None
         if self.label == "Java" and args and (args[0] == "instance" and len(args) > 2 and args[1] == "launch" or args[0] in ("release", "snapshot", "beta", "alpha", "infdev", "indev", "classic", "preclassic")):
             environment = QProcessEnvironment.systemEnvironment()
             for key, value in launch_environment(args[2] if args[0] == "instance" else "").items():
@@ -762,6 +772,7 @@ class GamePage(QWidget):
             if not quiet:(target or self.output).insertPlainText(t)
         def done(code,status):
             ready()
+            if activity_id:self.activity.finish(activity_id,code==0,"Completed" if code==0 else ("".join(chunks).strip()[-160:] or "Failed"))
             if code == 0 and self.label != "Servers":
                 launch = bool(args) and (args[0] == "launch" or (self.label == "Java" and args[0] == "instance" and len(args) > 2 and args[1] == "launch") or (self.label in ("Java", "Bedrock", "EDU") and args[0] not in ("versions", "mods", "modpack", "resourcepack", "shader", "instance", "account", "login", "java", "update")))
                 if launch:
@@ -813,31 +824,43 @@ class GamePage(QWidget):
         proc.readyReadStandardOutput.connect(ready);proc.finished.connect(done);proc.start()
 
 class UpdatesPage(QWidget):
-    def __init__(self):
-        super().__init__();self.pool=QThreadPool.globalInstance();self.update_job=None;self.check_job=None; root=QVBoxLayout(self); root.setContentsMargins(36,28,36,28)
+    def __init__(self, activity=None, window=None):
+        super().__init__();self.activity=activity;self.window=window;self.pool=QThreadPool.globalInstance();self.update_job=None;self.check_job=None;self.global_running=False;self.global_failed=False; root=QVBoxLayout(self); root.setContentsMargins(36,28,36,28)
         title=QLabel("UPDATES & ENGINES"); title.setObjectName("heroTitle"); root.addWidget(title)
         self.output=QPlainTextEdit(); self.output.setReadOnly(True); root.addWidget(self.output)
-        row=QHBoxLayout(); refresh=QPushButton("REFRESH STATUS"); refresh.setObjectName("secondary"); refresh.clicked.connect(self.refresh); self.update_button=QPushButton("UPDATE MANAGED ENGINES"); self.update_button.setObjectName("play"); self.update_button.clicked.connect(self.update_engines); self.self_btn=QPushButton("CHECK JAVBED UPDATE"); self.self_btn.setObjectName("secondary"); self.self_btn.clicked.connect(self.check_self); row.addWidget(refresh);row.addWidget(self.update_button);row.addWidget(self.self_btn);row.addStretch();root.addLayout(row); self.refresh()
+        row=QHBoxLayout(); refresh=QPushButton("REFRESH STATUS"); refresh.setObjectName("secondary"); refresh.clicked.connect(self.refresh); self.update_button=QPushButton("UPDATE MANAGED ENGINES"); self.update_button.setObjectName("play"); self.update_button.clicked.connect(self.update_engines); self.self_btn=QPushButton("CHECK JAVBED UPDATE"); self.self_btn.setObjectName("secondary"); self.self_btn.clicked.connect(self.check_self); row.addWidget(refresh);row.addWidget(self.update_button);row.addWidget(self.self_btn)
+        self.all_button=QPushButton("UPDATE ALL");self.all_button.setObjectName("play");self.all_button.clicked.connect(self.update_all);row.addWidget(self.all_button)
+        row.addStretch();root.addLayout(row); self.refresh()
     def refresh(self):
         text=["JAVBED "+__version__,""]
         for label,path,tag in engine_status(): text.append(f"{label}: {path or 'not found'} {tag}".rstrip())
         self.output.setPlainText("\n".join(text))
-    def update_engines(self):
+    def update_engines(self, after=None):
         if self.update_job:return
         self.update_button.setEnabled(False);self.output.appendPlainText("\nUpdating managed engines...")
         job=EngineUpdateJob();self.update_job=job
+        activity_id=self.activity.begin("Managed engines","GitHub releases","Updating",None) if self.activity else None
         job.signals.progress.connect(self.output.appendPlainText)
-        def done():
+        if activity_id:job.signals.progress.connect(lambda line:self.activity.progress(activity_id,stage=line))
+        if activity_id:job.signals.bytes_progress.connect(lambda label,received,total:self.activity.progress(activity_id,received,total,"Downloading "+label))
+        def done(success):
+            if self.global_running and not success:self.global_failed=True
+            if activity_id:self.activity.finish(activity_id,success,"Update pass complete" if success else "Some engine updates failed")
             self.update_job=None;self.update_button.setEnabled(True)
             self.output.appendPlainText("\nUpdate pass complete.")
+            if callable(after):after()
         job.signals.done.connect(done);self.pool.start(job)
-    def check_self(self):
+    def check_self(self, after=None):
         if self.check_job:return
         self.self_btn.setEnabled(False);self.output.appendPlainText("\nChecking JAVBED release...")
         job=Job(lambda:javbed_update(__version__));self.check_job=job
         def done(ok,result):
             self.check_job=None;self.self_btn.setEnabled(True)
-            if not ok:self.output.appendPlainText("Update check failed: "+str(result));return
+            if not ok:
+                if self.global_running:self.global_failed=True
+                self.output.appendPlainText("Update check failed: "+str(result))
+                if callable(after):after()
+                return
             tag,new,url=result
             if new:
                 self.output.appendPlainText(f"JAVBED {tag} is available.")
@@ -845,7 +868,114 @@ class UpdatesPage(QWidget):
                 self.self_btn.clicked.disconnect()
                 self.self_btn.clicked.connect(lambda:open_url(url))
             else:self.output.appendPlainText("JAVBED is up to date.")
+            if callable(after):after()
         job.signals.done.connect(done);self.pool.start(job)
+
+    def update_all(self):
+        if self.global_running or self.check_job or self.update_job or not self.window:
+            return
+        self.global_running=True
+        self.global_failed=False
+        self.all_button.setEnabled(False)
+        activity_id=self.activity.begin("Update All","JAVBED, engines, mods, SERVLI","Checking JAVBED") if self.activity else None
+
+        def stage(message):
+            self.output.appendPlainText(message)
+            if activity_id:self.activity.progress(activity_id,stage=message)
+
+        def finish():
+            summary="Update pass finished with issues." if self.global_failed else "Update pass complete. Running servers were skipped."
+            stage(summary)
+            self.global_running=False
+            self.all_button.setEnabled(True)
+            if activity_id:self.activity.finish(activity_id,not self.global_failed,summary)
+
+        def update_servers():
+            stage("Checking server software...")
+            job=Job(server_snapshot)
+
+            def listed(ok, rows):
+                if not ok:
+                    self.global_failed=True
+                    stage("Server updates unavailable: "+str(rows))
+                    finish();return
+                queue=[row for row in rows if not row.get("running") and row.get("provider")!="bds"]
+                for row in rows:
+                    if row.get("running"):
+                        stage("Skipped running server: "+row["name"])
+                    elif row.get("provider")=="bds":
+                        stage("Skipped BDS version change: "+row["name"])
+
+                def next_server():
+                    if not queue:
+                        finish();return
+                    row=queue.pop(0)
+                    stage("Updating server "+row["name"]+"...")
+                    def updated(ok, output):
+                        if not ok:self.global_failed=True
+                        stage(("Updated " if ok else "Server update failed: ")+row["name"])
+                        next_server()
+                    self.window.server_page.run(["update",row["name"]],target=self.window.server_page.output,finished=updated)
+
+                next_server()
+
+            job.signals.done.connect(listed)
+            self.pool.start(job)
+
+        def update_mods():
+            browser=self.window.java_page.mods_panel
+            browser.refresh_instances(False)
+            names=[browser.instance.itemText(index) for index in range(browser.instance.count())]
+            stage("Checking tracked mods across "+str(len(names))+" Java instances...")
+
+            def next_instance():
+                if not names:
+                    check_modpacks();return
+                name=names.pop(0)
+                browser.instance.blockSignals(True)
+                browser.instance.setCurrentText(name)
+                browser.instance.blockSignals(False)
+                stage("Updating mods in "+name+"...")
+                def updated():
+                    if browser.status.text().startswith("Update failed"):
+                        self.global_failed=True
+                        stage(name+": "+browser.status.text())
+                    next_instance()
+                browser.update_all(updated)
+
+            next_instance()
+
+        def check_modpacks():
+            stage("Checking installed modpacks...")
+
+            def query():
+                messages=[]
+                key=str(load_settings().get("curseforge_api_key") or "")
+                for item in instance_snapshot():
+                    pack=item.get("preferences",{}).get("modpack") or {}
+                    if not pack.get("project"):
+                        continue
+                    try:
+                        latest=content.newest_compatible(pack["provider"],"modpack",pack["project"],str(item["version"]),str(item.get("loader") or "vanilla"),key)
+                        if latest and latest["id"]!=pack.get("version_id"):
+                            messages.append(item["name"]+": newer compatible modpack "+str(latest["version"])+" available in Modpacks")
+                    except Exception as exc:
+                        messages.append(item["name"]+": modpack check failed: "+str(exc)[:120])
+                return messages
+
+            job=Job(query)
+            def checked(ok, messages):
+                if not ok:
+                    self.global_failed=True
+                    stage("Modpack checks failed: "+str(messages))
+                else:
+                    for message in messages:stage(message)
+                    if any("check failed" in message for message in messages):self.global_failed=True
+                update_servers()
+            job.signals.done.connect(checked)
+            self.pool.start(job)
+
+        self.check_self(lambda:self.update_engines(update_mods))
 
 class SettingsPage(QWidget):
     def __init__(self):
@@ -896,7 +1026,7 @@ class SettingsPage(QWidget):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__();self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620);self.setAcceptDrops(True)
+        super().__init__();self.activity=ActivityManager(self);self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620);self.setAcceptDrops(True)
         root=QWidget();layout=QHBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
         account=QFrame();account.setObjectName("account");a=QVBoxLayout(account)
@@ -906,15 +1036,40 @@ class MainWindow(QMainWindow):
         self.account_button.clicked.connect(self.show_account_menu)
         a.addWidget(self.account_button)
         r.addWidget(account)
+        from PySide6.QtWidgets import QScrollArea
+        nav_scroll=QScrollArea();nav_scroll.setWidgetResizable(True);nav_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        nav_scroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: 0; }")
+        nav_content=QWidget();nav_layout=QVBoxLayout(nav_content);nav_layout.setContentsMargins(0,0,0,0);nav_layout.setSpacing(0)
+        nav_scroll.setWidget(nav_content);r.addWidget(nav_scroll,1)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Settings")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Activity","Doctor","Settings")
         for i,label in enumerate(entries):
-            display=label.upper() if label in ("Home","Settings","Updates","Worlds") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
-            b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
-            page=HomePage(self, home_snapshot) if label=="Home" else (WorldPage(self.play_world, self) if label=="Worlds" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label))))));self.pages.append(page);self.stack.addWidget(page)
+            display=label.upper() if label in ("Home","Settings","Updates","Activity","Doctor","Worlds") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
+            b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));nav_layout.addWidget(b);self.buttons.append(b)
+            if label == "Home":
+                page = HomePage(self, home_snapshot)
+            elif label == "Worlds":
+                page = WorldPage(self.play_world, self)
+            elif label == "Story Mode":
+                page = StoryModePage(self.activity)
+            elif label == "Activity":
+                page = ActivityPage(self.activity)
+            elif label == "Doctor":
+                page = DoctorPage(self.activity)
+            elif label == "Settings":
+                page = SettingsPage()
+            elif label == "Updates":
+                page = UpdatesPage(self.activity, self)
+            elif label in EXTRA_GAMES:
+                page = ExtraPage(label)
+            else:
+                page = GamePage(label, self.activity)
+            self.pages.append(page)
+            self.stack.addWidget(page)
             if label=="Java":self.java_page=page
+            if label=="Servers":self.server_page=page
             if label=="Story Mode":self.story_page=page
-        r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all);QTimer.singleShot(500,self.recover_safe_modes)
+        nav_layout.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all);QTimer.singleShot(500,self.recover_safe_modes)
     def recover_safe_modes(self):
         for name, pid in safemode.pending():
             def restore_after_exit(started, code, target=name):
@@ -956,7 +1111,7 @@ class MainWindow(QMainWindow):
             if isinstance(p,GamePage):p.startup_refresh()
             elif isinstance(p,ExtraPage):p.refresh()
     def select_name(self,name):
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Settings")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Activity","Doctor","Settings")
         if name in entries:self.select(entries.index(name))
     def play_world(self, world):
         if world.edition == "Java" and world.instance:

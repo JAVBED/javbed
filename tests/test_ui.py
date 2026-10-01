@@ -38,7 +38,7 @@ class UiTests(unittest.TestCase):
     def test_engine_updates_leave_event_loop_responsive(self):
         page = UpdatesPage()
         ticked = []
-        def slow_install(_engine):
+        def slow_install(_engine, **_kwargs):
             time.sleep(0.06)
             return "v1"
         with patch("javbed.engines.Engine.install_latest", slow_install):
@@ -65,7 +65,7 @@ class UiTests(unittest.TestCase):
             window = MainWindow()
             window.show()
             self.app.processEvents()
-            self.assertEqual(window.stack.count(), 13)
+            self.assertEqual(window.stack.count(), 15)
             window.select_name("Java")
             window.java_page.switch_view("instances")
             self.assertTrue(window.java_page.instances_panel.isVisible())

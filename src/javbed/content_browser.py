@@ -127,7 +127,7 @@ class ContentBrowser(QWidget):
         self.updating = False
         self.refresh_instances()
 
-    def refresh_instances(self):
+    def refresh_instances(self, refresh_view=True):
         previous = self.instance.currentText()
         self.instance.blockSignals(True)
         self.instance.clear()
@@ -135,7 +135,7 @@ class ContentBrowser(QWidget):
             self.instance.addItem(str(item["name"]), item)
         self.instance.setCurrentText(previous)
         self.instance.blockSignals(False)
-        if self.installed_view:
+        if self.installed_view and refresh_view:
             self.refresh_installed()
 
     def selected(self):
@@ -485,9 +485,10 @@ class ContentBrowser(QWidget):
         job.signals.done.connect(checked)
         self.pool.start(job)
 
-    def update_all(self):
+    def update_all(self, on_done=None):
         item = self.selected()
         if not item or self.job or self.updating:
+            if callable(on_done): on_done()
             return
         folder = self.folder(item)
         rows = content_registry.load()
@@ -496,6 +497,7 @@ class ContentBrowser(QWidget):
         queue = [(path, row) for path, row in queue if path.is_file()]
         if not queue:
             self.status.setText("No tracked mods to update.")
+            if callable(on_done): on_done()
             return
 
         def next_item():
@@ -506,6 +508,7 @@ class ContentBrowser(QWidget):
                 self.status.setText("Update pass complete.")
                 if self.installed_view:
                     self.refresh_installed()
+                if callable(on_done): on_done()
 
         next_item()
 

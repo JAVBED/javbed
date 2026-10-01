@@ -84,7 +84,7 @@ class Engine:
             return ["cmd.exe", "/d", "/c", str(exe), *args], None
         return [str(exe), *args], None
 
-    def install_latest(self, progress=None):
+    def install_latest(self, progress=None, download_progress=None):
         self.directory.mkdir(parents=True, exist_ok=True)
         req = urllib.request.Request(API.format(repo=self.project), headers={"Accept": "application/vnd.github+json", "User-Agent": "JAVBED"})
         with urllib.request.urlopen(req, timeout=30) as response:
@@ -110,9 +110,14 @@ class Engine:
             package = temporary / Path(name).name
             digest = hashlib.sha256()
             with urllib.request.urlopen(url, timeout=60) as response, package.open("wb") as output:
+                received = 0
+                total = int(getattr(response, "headers", {}).get("Content-Length") or 0)
                 while chunk := response.read(1024 * 1024):
                     output.write(chunk)
                     digest.update(chunk)
+                    received += len(chunk)
+                    if download_progress:
+                        download_progress(received, total)
             expected_digest = asset.get("digest", "")
             if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", expected_digest):
                 raise RuntimeError(f"Release asset {name} has no SHA-256 digest.")
