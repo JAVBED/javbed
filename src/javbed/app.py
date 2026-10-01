@@ -1,8 +1,8 @@
 from __future__ import annotations
 import os, re, shutil, subprocess, sys, threading
 from pathlib import Path
-from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, QThreadPool, QTimer, Signal, Qt
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, QThreadPool, QTimer, Signal, Qt, QUrl
+from PySide6.QtGui import QIcon, QPixmap, QDesktopServices
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget, QInputDialog
 from .engines import ENGINES
 from . import history
@@ -14,6 +14,8 @@ from .instance_library import InstanceLibrary
 from .content_browser import ContentBrowser
 from .modpack_browser import ModpackBrowser
 from .world_page import WorldPage
+from . import safemode
+from .crashdoctor import diagnose
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
@@ -359,8 +361,11 @@ class StoryModePage(QWidget):
         job.signals.done.connect(done);self.pool.start(job)
 
 class GamePage(QWidget):
+    game_ended = Signal(str, object)
     def __init__(self,label):
         super().__init__();self.label=label;self.engine=ENGINES[label];self.proc=None;self.pool=QThreadPool.globalInstance()
+        self.safe_mode_active = set()
+        self.game_ended.connect(self.on_game_ended)
         root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0);self.root=root;self.top=self.topbar();root.addWidget(self.top)
         hero = HeroArt(label)
         self.hero = hero
@@ -656,6 +661,62 @@ class GamePage(QWidget):
         n=self.server.text().strip()
         if not n:self.status.setText("Enter a server name.");return
         self.run([a,n],target=self.server_console_output if hasattr(self,"server_console_output") else self.output)
+    def play_safe_mode(self, name):
+        if name in self.safe_mode_active:
+            self.status.setText("Safe Mode is already running for " + name)
+            return
+        job = Job(lambda: safemode.prepare(name))
+        self.status.setText("Temporarily disabling mods...")
+
+        def prepared(ok, result):
+            if not ok:
+                self.status.setText("Safe Mode failed: " + str(result))
+                return
+            self.safe_mode_active.add(name)
+            self.status.setText(f"Safe Mode: {result} mod(s) disabled until Minecraft exits.")
+
+            def launched(success, output):
+                tracked = next((pid for target, pid in safemode.pending() if target == name), 0)
+                if not success or not tracked:
+                    self.safe_mode_active.discard(name)
+                    self.pool.start(Job(lambda: safemode.restore(name)))
+                    self.status.setText("Safe Mode launch was not confirmed; restoring mods.")
+
+            self.run(["instance", "launch", name], finished=launched)
+
+        job.signals.done.connect(prepared)
+        self.pool.start(job)
+
+    def on_game_ended(self, name, result):
+        self.safe_mode_active.discard(name)
+        if result.get("restore_error"):
+            self.status.setText("Safe Mode restoration needs attention: " + result["restore_error"])
+        diagnosis = result.get("diagnosis")
+        if not diagnosis:
+            return
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setWindowTitle("Crash Detected")
+        box.setText("CRASH DETECTED\n\nLikely cause: " + diagnosis.cause)
+        box.setInformativeText("Evidence: " + diagnosis.evidence)
+        paths = {}
+        for title, path in (("OPEN LOG", diagnosis.log), ("OPEN CRASH REPORT", diagnosis.report)):
+            if path:
+                paths[box.addButton(title, QMessageBox.ButtonRole.ActionRole)] = path
+        mods = get_instance(name) if name else None
+        if mods:
+            paths[box.addButton("OPEN MODS FOLDER", QMessageBox.ButtonRole.ActionRole)] = Path(str(mods["path"])) / "minecraft" / "mods"
+            safe = box.addButton("PLAY SAFE MODE", QMessageBox.ButtonRole.ActionRole)
+        else:
+            safe = None
+        box.addButton("CLOSE", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        selected = box.clickedButton()
+        if selected in paths:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(paths[selected])))
+        elif selected == safe and name:
+            self.play_safe_mode(name)
+
     def run(self,args,capture=None,quiet=False,target=None,finished=None):
         cmd,error=self.engine.command(*[x for x in args if x])
         if error:
@@ -702,7 +763,23 @@ class GamePage(QWidget):
                         version = str(info.get("version", "")) if info else (args[-1] if self.label in ("Java", "Bedrock", "EDU") and args else "")
                         loader = str(info.get("loader", "")) if info else ""
                         channel = str(info.get("era", "")) if info else (args[0] if self.label in ("Java", "Bedrock") else "")
-                        history.watch_pid(int(match.group(1)), self.label, instance=instance, version=version, channel=channel, loader=loader)
+                        def exited(started, exit_code):
+                            restore_error = ""
+                            if instance in self.safe_mode_active:
+                                try:safemode.restore(instance)
+                                except Exception as exc:restore_error = str(exc)
+                            diagnosis = None
+                            if self.label == "Java" and instance and info:
+                                try:diagnosis = diagnose(Path(str(info["path"])) / "minecraft", started, exit_code)
+                                except OSError:pass
+                            self.game_ended.emit(instance, {"diagnosis": diagnosis, "restore_error": restore_error})
+                        if instance in self.safe_mode_active:
+                            try:safemode.set_pid(instance, int(match.group(1)))
+                            except Exception as exc:self.status.setText("Safe Mode journal error: " + str(exc))
+                        watched = history.watch_pid(int(match.group(1)), self.label, instance=instance, version=version, channel=channel, loader=loader, on_exit=exited)
+                        if not watched and instance in self.safe_mode_active:
+                            self.pool.start(Job(lambda: safemode.restore(instance)))
+                            self.safe_mode_active.discard(instance)
             if capture=="versions" and hasattr(self,"version"):
                 vals=[]
                 for line in "".join(chunks).splitlines():vals+=re.findall(r"(?<!\w)(?:[cbra]?\d+(?:\.\d+){1,3}(?:[-._][\w.-]+)?|latest)(?!\w)",line,re.I)
@@ -826,7 +903,15 @@ class MainWindow(QMainWindow):
             page=HomePage(self, home_snapshot) if label=="Home" else (WorldPage(self.play_world, self) if label=="Worlds" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label))))));self.pages.append(page);self.stack.addWidget(page)
             if label=="Java":self.java_page=page
             if label=="Story Mode":self.story_page=page
-        r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)
+        r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all);QTimer.singleShot(500,self.recover_safe_modes)
+    def recover_safe_modes(self):
+        for name, pid in safemode.pending():
+            def restore_after_exit(started, code, target=name):
+                try:safemode.restore(target)
+                except (OSError, ValueError):pass
+            attached = pid > 0 and history.watch_pid(pid, "Java", instance=name, on_exit=restore_after_exit, record_session=False)
+            if not attached:
+                self.java_page.pool.start(Job(lambda target=name: safemode.restore(target)))
     def update_account(self, account, avatar):
         self.account_button.setText((account["username"] + "  ▾") if account else "No Java account  ▾")
         self.account_button.setIcon(QIcon(avatar) if avatar else QIcon())

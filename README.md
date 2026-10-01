@@ -37,6 +37,8 @@ The **Worlds** page finds vanilla Java and JAVLI worlds, plus accessible Bedrock
 
 Java instances can be exported as versioned `.javbed` packages and reconstructed through JAVLI. Packages contain metadata and provider references, never Minecraft binaries or local mod files. The manifest lists local files that need manual reinstallation. Drag `.javbed`, `.mrpack`, mod JARs, resource pack ZIPs, shader ZIPs, world ZIPs, or Story Mode ISOs onto the window to open the corresponding import flow.
 
+The Java instance menu includes **Play in Safe Mode**. JAVBED temporarily renames that instance's mod JARs, then restores them after Minecraft exits; a recovery journal survives launcher restarts. When a Java instance exits abnormally or writes a new crash report, Crash Doctor checks recent evidence for common mod, loader, Java, memory, and library errors. Its dialog links to the log, crash report, mods folder, and Safe Mode. Diagnoses are suggestions when the evidence is ambiguous.
+
 ## Releases
 
 Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.

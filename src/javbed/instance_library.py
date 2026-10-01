@@ -246,6 +246,7 @@ class InstanceLibrary(QWidget):
 
     def show_menu(self, button, item):
         menu = QMenu(self)
+        menu.addAction("Play in Safe Mode", lambda: self.parent().play_safe_mode(item["name"]))
         menu.addAction("Edit", lambda: self.edit_instance(item))
         menu.addAction("Clone", lambda: self.clone_instance(item))
         menu.addAction("Export .javbed", lambda: self.export_portable(item))

@@ -76,7 +76,7 @@ def watch_process(process, game: str, *, instance: str = "", version: str = "", 
     threading.Thread(target=wait, daemon=True, name="javbed-playtime").start()
 
 
-def watch_pid(pid: int, game: str, *, instance: str = "", version: str = "", channel: str = "", loader: str = "") -> bool:
+def watch_pid(pid: int, game: str, *, instance: str = "", version: str = "", channel: str = "", loader: str = "", on_exit=None, record_session=True) -> bool:
     """Monitor a game detached by a CLI without blocking Qt."""
     if pid <= 0:
         return False
@@ -87,14 +87,19 @@ def watch_pid(pid: int, game: str, *, instance: str = "", version: str = "", cha
         kernel = ctypes.windll.kernel32
         kernel.OpenProcess.argtypes = (ctypes.c_uint, ctypes.c_int, ctypes.c_uint)
         kernel.OpenProcess.restype = ctypes.c_void_p
-        handle = kernel.OpenProcess(0x00100000, 0, pid)  # SYNCHRONIZE
+        handle = kernel.OpenProcess(0x00101000, 0, pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION
         if not handle:
             return False
 
         def wait():
             try:
                 kernel.WaitForSingleObject(ctypes.c_void_p(handle), 0xFFFFFFFF)
-                record(game, started, now(), instance=instance, version=version, channel=channel, loader=loader)
+                code = ctypes.c_ulong()
+                exit_code = code.value if kernel.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code)) else None
+                if record_session:
+                    record(game, started, now(), instance=instance, version=version, channel=channel, loader=loader)
+                if on_exit:
+                    on_exit(started.timestamp(), exit_code)
             finally:
                 kernel.CloseHandle(ctypes.c_void_p(handle))
     else:
@@ -110,7 +115,10 @@ def watch_pid(pid: int, game: str, *, instance: str = "", version: str = "", cha
                     os.kill(pid, 0)
                 except OSError:
                     break
-            record(game, started, now(), instance=instance, version=version, channel=channel, loader=loader)
+            if record_session:
+                record(game, started, now(), instance=instance, version=version, channel=channel, loader=loader)
+            if on_exit:
+                on_exit(started.timestamp(), None)
 
     threading.Thread(target=wait, daemon=True, name="javbed-playtime").start()
     return True
