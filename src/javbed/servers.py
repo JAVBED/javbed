@@ -6,10 +6,11 @@ import json
 import os
 import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, QTimer, Qt, QUrl
+from PySide6.QtCore import QThreadPool, QTimer, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QTextCursor
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout,
                                QFrame, QHBoxLayout, QInputDialog, QLabel,
@@ -102,6 +103,7 @@ def validate_property(key: str, value: str) -> str:
 
 
 class ServerDashboard(QWidget):
+    unexpected_stop = Signal(str)
     def __init__(self, run_command, parent=None):
         super().__init__(parent)
         self.run_command = run_command
@@ -109,6 +111,9 @@ class ServerDashboard(QWidget):
         self.job = None
         self.log_job = None
         self.addon_job = None
+        self.status_job = None
+        self.known_running = {}
+        self.expected_stops = {}
         self.server = None
         self.log_cursor = ("", 0)
         self.loaded_properties = {}
@@ -149,7 +154,36 @@ class ServerDashboard(QWidget):
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.poll_log)
+        self.status_timer = QTimer(self)
+        self.status_timer.setInterval(15000)
+        self.status_timer.timeout.connect(self.check_status)
+        self.status_timer.start()
         self.refresh()
+
+    def expect_stop(self, name):
+        self.expected_stops[name] = time.monotonic() + 60
+
+    def check_status(self):
+        if self.status_job:
+            return
+        job = Job(server_snapshot)
+        self.status_job = job
+
+        def done(ok, rows):
+            self.status_job = None
+            if not ok:
+                return
+            current = {row["name"]: bool(row.get("running")) for row in rows}
+            for name, was_running in self.known_running.items():
+                if was_running and name in current and not current[name]:
+                    if self.expected_stops.get(name, 0) < time.monotonic():
+                        self.unexpected_stop.emit(name)
+                    self.expected_stops.pop(name, None)
+            self.expected_stops = {name: expiry for name, expiry in self.expected_stops.items() if expiry > time.monotonic()}
+            self.known_running = current
+
+        job.signals.done.connect(done)
+        self.pool.start(job)
 
     def button(self, label, action):
         button = QPushButton(label)
@@ -175,6 +209,8 @@ class ServerDashboard(QWidget):
         self.pool.start(job)
 
     def show_servers(self, rows):
+        if not self.known_running:
+            self.known_running = {row["name"]: bool(row.get("running")) for row in rows}
         if self.server:
             self.server = next((row for row in rows if row.get("name") == self.server.get("name")), self.server)
         while self.cards.count() > 1:
@@ -209,6 +245,8 @@ class ServerDashboard(QWidget):
             self.cards.insertWidget(self.cards.count() - 1, frame)
 
     def command(self, args, after=None):
+        if args and args[0] in ("stop", "restart") and len(args) > 1:
+            self.expect_stop(args[1])
         self.status.setText("Running SERVLI " + " ".join(args[:2]) + "...")
 
         def done(ok, output):
@@ -237,6 +275,22 @@ class ServerDashboard(QWidget):
         self.load_backups()
         self.load_addons()
         self.timer.start()
+
+    def open_named(self, name):
+        job = Job(server_snapshot)
+
+        def loaded(ok, rows):
+            if not ok:
+                self.status.setText("Could not open server: " + str(rows))
+                return
+            row = next((item for item in rows if item.get("name") == name), None)
+            if row:
+                self.open_server(row)
+            else:
+                self.status.setText("Server not found: " + name)
+
+        job.signals.done.connect(loaded)
+        self.pool.start(job)
 
     def build_tabs(self):
         overview = QWidget(); layout = QVBoxLayout(overview)
@@ -423,8 +477,9 @@ class ServerDashboard(QWidget):
             for row in rows:
                 self.backup_choice.addItem(f"{row['name']} · {row.get('size', 0) / (1024 * 1024):.1f} MB", row["name"])
             schedule = self.server.get("schedule") or {}
-            self.schedule_mode.setCurrentText(str(schedule.get("Mode", "off")))
-            self.keep.setValue(int(schedule.get("Keep", 10)))
+            defaults = load_settings() if not (Path(str(self.server["data"])) / "backup-schedule.json").is_file() else {}
+            self.schedule_mode.setCurrentText(str(defaults.get("server_backup_mode", schedule.get("Mode", "off"))))
+            self.keep.setValue(int(defaults.get("server_backup_keep", schedule.get("Keep", 10))))
             self.max_age.setValue(int(schedule.get("MaxAgeDays", 0)))
 
         job.signals.done.connect(done)

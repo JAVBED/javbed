@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, Qt, QUrl
+from PySide6.QtCore import QThreadPool, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QMessageBox, QPushButton, QScrollArea, QVBoxLayout, QWidget)
@@ -16,6 +16,7 @@ from .worlds import (available_roots, backup_world, discover_worlds, duplicate_w
 
 
 class WorldPage(QWidget):
+    completed = Signal(str)
     def __init__(self, play, parent=None):
         super().__init__(parent)
         self.play = play
@@ -57,6 +58,8 @@ class WorldPage(QWidget):
         def done(ok, result):
             self.job = None
             self.status.setText(("Done: " if ok else "Failed: ") + str(result)[:200])
+            if ok:
+                self.completed.emit(label)
             if ok and after:
                 after(result)
 

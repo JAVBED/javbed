@@ -1,8 +1,16 @@
 from __future__ import annotations
-import json, os
+import json, os, sys
 from pathlib import Path
 
-ROOT = Path(os.getenv("LOCALAPPDATA") or (Path.home()/".local"/"share"))/"JAVBED"
+def data_root(application_dir=None, local_app_data=None):
+    if application_dir is None:
+        application_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2]
+    location = Path(application_dir)
+    if (location / "portable.txt").is_file():
+        return location / "JAVBED-data"
+    return Path(local_app_data or os.getenv("LOCALAPPDATA") or (Path.home()/".local"/"share"))/"JAVBED"
+
+ROOT = data_root()
 FILE = ROOT/"settings.json"
 _applied_env = set()
 DEFAULTS = {
@@ -28,10 +36,25 @@ DEFAULTS = {
     "bedrock_worlds_path": "",
     "edu_worlds_path": "",
     "servli_home": "",
+    "server_backup_keep": 10,
+    "server_backup_mode": "off",
+    "minimize_on_launch": False,
+    "theme": "dark",
+    "accent_color": "#3c8527",
+    "compact_navigation": False,
+    "show_artwork": True,
+    "startup_page": "Home",
+    "show_onboarding": True,
+    "onboarding_complete": False,
 }
 def load():
     data=dict(DEFAULTS)
-    try:data.update(json.loads(FILE.read_text(encoding="utf-8")))
+    try:
+        stored=json.loads(FILE.read_text(encoding="utf-8"))
+        if isinstance(stored,dict):
+            data.update(stored)
+            if "onboarding_complete" not in stored:
+                data["onboarding_complete"]=True
     except (OSError,ValueError):pass
     return data
 def save(data):

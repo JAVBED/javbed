@@ -2,8 +2,8 @@ from __future__ import annotations
 import os, re, shutil, subprocess, sys, threading
 from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, QThreadPool, QTimer, Signal, Qt, QUrl
-from PySide6.QtGui import QIcon, QPixmap, QDesktopServices
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget, QInputDialog
+from PySide6.QtGui import QIcon, QPixmap, QDesktopServices, QColor, QShortcut, QKeySequence
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget, QInputDialog, QSystemTrayIcon
 from .engines import ENGINES
 from . import history
 from .accounts import active_account, avatar_path
@@ -20,11 +20,16 @@ from .crashdoctor import diagnose
 from .servers import ServerDashboard, server_snapshot
 from .activity import ActivityManager, ActivityPage
 from .doctor_page import DoctorPage
+from .deeplinks import parse as parse_deep_link, register_windows
+from .onboarding import OnboardingDialog, first_run_snapshot
+from .palette import CommandPalette
+from .notifications import NotificationCenter
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
+from . import settings as settings_module
 from .services import engine_status, javbed_update, open_url
 from .storymode import DOWNLOAD_URLS, DownloadCancelled, detect_game as detect_story_mode, download_iso
-from .theme import STYLE
+from .theme import STYLE, stylesheet
 from . import __version__
 
 EXTRA_GAMES={
@@ -51,17 +56,22 @@ GAME_FOLDER_NAMES = {
 class HeroArt(QLabel):
     def __init__(self,label):
         super().__init__();self.label=label;self.original=QPixmap();self.setMinimumHeight(360);self.setAlignment(Qt.AlignmentFlag.AlignCenter);self.setStyleSheet("background:#151515")
-        cached=cached_art(label)
+        self.apply_preference()
+    def apply_preference(self):
+        self.show_art=bool(load_settings().get("show_artwork",True))
+        if not self.show_art:
+            self.original=QPixmap();self.clear();self.setText(self.label.upper());return
+        cached=cached_art(self.label)
         if cached:self.set_art(str(cached))
-        else:self._art_job=load_async(label,self.set_art)
+        else:self._art_job=load_async(self.label,self.set_art)
     def set_art(self,path):
-        if path:
+        if path and self.show_art:
             pix=QPixmap(path)
             if not pix.isNull():self.original=pix;self.apply_cover()
     def resizeEvent(self,event):
         super().resizeEvent(event);self.apply_cover()
     def apply_cover(self):
-        if self.original.isNull() or self.width() < 2 or self.height() < 2:
+        if not self.show_art or self.original.isNull() or self.width() < 2 or self.height() < 2:
             return
         scaled = self.original.scaled(
             self.size(),
@@ -264,6 +274,7 @@ class ExtraPage(QWidget):
                 else:
                     process = subprocess.Popen([target],cwd=str(Path(target).parent))
                     history.watch_process(process, self.label)
+                if hasattr(self.window(),"on_game_launched"):self.window().on_game_launched()
             except OSError as exc:
                 self.state.setText("Launch failed: "+str(exc)[:140])
             return
@@ -321,6 +332,7 @@ class StoryModePage(QWidget):
             try:
                 process = subprocess.Popen([str(self.target)],cwd=str(self.target.parent))
                 history.watch_process(process, self.title())
+                if hasattr(self.window(),"on_game_launched"):self.window().on_game_launched()
             except OSError as exc:self.state.setText("Launch failed: "+str(exc)[:140])
     def download_selected(self):
         title=self.title();url=DOWNLOAD_URLS.get(title)
@@ -735,6 +747,8 @@ class GamePage(QWidget):
             self.play_safe_mode(name)
 
     def run(self,args,capture=None,quiet=False,target=None,finished=None):
+        if self.label == "Servers" and args and args[0] in ("stop", "restart") and len(args)>1 and hasattr(self,"server_dashboard"):
+            self.server_dashboard.expect_stop(args[1])
         cmd,error=self.engine.command(*[x for x in args if x])
         if error:
             self.status.setText(error)
@@ -797,6 +811,8 @@ class GamePage(QWidget):
                             try:safemode.set_pid(instance, int(match.group(1)))
                             except Exception as exc:self.status.setText("Safe Mode journal error: " + str(exc))
                         watched = history.watch_pid(int(match.group(1)), self.label, instance=instance, version=version, channel=channel, loader=loader, on_exit=exited)
+                        if watched and hasattr(self.window(),"on_game_launched"):
+                            self.window().on_game_launched()
                         if not watched and instance in self.safe_mode_active:
                             self.pool.start(Job(lambda: safemode.restore(instance)))
                             self.safe_mode_active.discard(instance)
@@ -864,6 +880,7 @@ class UpdatesPage(QWidget):
             tag,new,url=result
             if new:
                 self.output.appendPlainText(f"JAVBED {tag} is available.")
+                if self.window:self.window.notifications.post("update:"+tag,f"JAVBED {tag} is available")
                 self.self_btn.setText("OPEN RELEASE")
                 self.self_btn.clicked.disconnect()
                 self.self_btn.clicked.connect(lambda:open_url(url))
@@ -992,31 +1009,73 @@ class SettingsPage(QWidget):
         self.height = QSpinBox(); self.height.setRange(480, 4320); self.height.setValue(int(self.data["resolution_height"]))
         self.fullscreen = QCheckBox(); self.fullscreen.setChecked(bool(self.data["fullscreen"]))
         self.close_on_launch = QCheckBox(); self.close_on_launch.setChecked(bool(self.data["close_on_launch"]))
+        self.minimize_on_launch = QCheckBox(); self.minimize_on_launch.setChecked(bool(self.data.get("minimize_on_launch",False)))
+        self.close_on_launch.toggled.connect(lambda checked:self.minimize_on_launch.setChecked(False) if checked else None)
+        self.minimize_on_launch.toggled.connect(lambda checked:self.close_on_launch.setChecked(False) if checked else None)
         self.check_updates = QCheckBox(); self.check_updates.setChecked(bool(self.data["check_updates"]))
         self.minecraft_dir = QLineEdit(str(self.data["minecraft_directory"]))
         self.java_runtime = QLineEdit(str(self.data["java_runtime"]))
         self.curseforge = QLineEdit(str(self.data["curseforge_api_key"])); self.curseforge.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("Java memory", self.memory); form.addRow("Window width", self.width); form.addRow("Window height", self.height); form.addRow("Fullscreen", self.fullscreen); form.addRow("Close launcher on game start", self.close_on_launch); form.addRow("Check for updates", self.check_updates); form.addRow("Minecraft directory", self.minecraft_dir); form.addRow("Java runtime", self.java_runtime); form.addRow("CurseForge API key", self.curseforge)
         self.bedrock_worlds = QLineEdit(str(self.data.get("bedrock_worlds_path", "")))
         self.edu_worlds = QLineEdit(str(self.data.get("edu_worlds_path", "")))
         self.servli_home = QLineEdit(str(self.data.get("servli_home", "")))
-        form.addRow("Bedrock worlds folder", self.bedrock_worlds)
-        form.addRow("EDU worlds folder", self.edu_worlds)
-        form.addRow("SERVLI home", self.servli_home)
+        self.backup_mode=QComboBox();self.backup_mode.addItems(["off","30m","hourly","daily","on-stop"]);self.backup_mode.setCurrentText(str(self.data.get("server_backup_mode","off")))
+        self.backup_keep=QSpinBox();self.backup_keep.setRange(1,1000);self.backup_keep.setValue(int(self.data.get("server_backup_keep",10)))
         self.engine_fields = {}
         for label, key in (("JAVLI path","engine_java"),("BEDLI path","engine_bedrock"),("EDULI path","engine_edu"),("LEGLI path","engine_lce"),("SERVLI path","engine_servers")):
-            field = QLineEdit(str(self.data.get(key,""))); self.engine_fields[key]=field; form.addRow(label, field)
-        root.addLayout(form)
+            field = QLineEdit(str(self.data.get(key,""))); self.engine_fields[key]=field
+        self.theme_choice=QComboBox();self.theme_choice.addItem("Dark","dark")
+        self.accent=QLineEdit(str(self.data.get("accent_color","#3c8527")))
+        accent_button=QPushButton("CHOOSE");accent_button.setObjectName("secondary");accent_button.clicked.connect(self.choose_accent)
+        accent_row=QHBoxLayout();accent_row.addWidget(self.accent);accent_row.addWidget(accent_button)
+        self.compact_nav=QCheckBox();self.compact_nav.setChecked(bool(self.data.get("compact_navigation",False)))
+        self.show_artwork=QCheckBox();self.show_artwork.setChecked(bool(self.data.get("show_artwork",True)))
+        self.startup=QComboBox();self.startup.addItems(["Home","Java","Servers","Worlds","Updates"]);self.startup.setCurrentText(str(self.data.get("startup_page","Home")))
+        def heading(text):
+            label=QLabel(text);label.setObjectName("game");form.addRow(label)
+        heading("GENERAL")
+        form.addRow("Check for updates",self.check_updates);form.addRow("Close on game start",self.close_on_launch);form.addRow("Minimize on game start",self.minimize_on_launch);form.addRow("Startup page",self.startup)
+        heading("JAVA")
+        form.addRow("Java memory",self.memory);form.addRow("Window width",self.width);form.addRow("Window height",self.height);form.addRow("Fullscreen",self.fullscreen);form.addRow("Minecraft directory",self.minecraft_dir);form.addRow("Java runtime",self.java_runtime)
+        heading("ENGINES")
+        for label,key in (("JAVLI path","engine_java"),("BEDLI path","engine_bedrock"),("EDULI path","engine_edu"),("LEGLI path","engine_lce"),("SERVLI path","engine_servers")):
+            form.addRow(label,self.engine_fields[key])
+        heading("MODS")
+        form.addRow("CurseForge API key",self.curseforge)
+        heading("SERVERS")
+        form.addRow("SERVLI home",self.servli_home);form.addRow("Default backup schedule",self.backup_mode);form.addRow("Default backups to keep",self.backup_keep)
+        heading("APPEARANCE")
+        form.addRow("Theme",self.theme_choice);form.addRow("Accent color",accent_row);form.addRow("Compact navigation",self.compact_nav);form.addRow("Show artwork",self.show_artwork)
+        heading("ADVANCED")
+        form.addRow("Bedrock worlds folder",self.bedrock_worlds);form.addRow("EDU worlds folder",self.edu_worlds)
+        form.addRow("Data folder",QLabel(str(settings_module.ROOT)))
+        doctor_button=QPushButton("OPEN DIAGNOSTICS");doctor_button.setObjectName("secondary");doctor_button.clicked.connect(lambda:self.window().select_name("Doctor"));form.addRow(doctor_button)
+        from PySide6.QtWidgets import QScrollArea
+        form_panel=QWidget();form_panel.setLayout(form)
+        form_scroll=QScrollArea();form_scroll.setWidgetResizable(True);form_scroll.setFrameShape(QFrame.Shape.NoFrame);form_scroll.setWidget(form_panel)
+        root.addWidget(form_scroll,1)
         actions = QHBoxLayout()
         save_btn = QPushButton("SAVE SETTINGS"); save_btn.setObjectName("play"); save_btn.clicked.connect(self.save)
         folder_btn = QPushButton("OPEN JAVBED DATA FOLDER"); folder_btn.setObjectName("secondary"); folder_btn.clicked.connect(self.open_data)
         actions.addWidget(save_btn); actions.addWidget(folder_btn); actions.addStretch(); root.addLayout(actions)
-        self.status = QLabel(""); root.addWidget(self.status); root.addStretch()
+        self.status = QLabel(""); root.addWidget(self.status)
+    def choose_accent(self):
+        from PySide6.QtWidgets import QColorDialog
+        color=QColorDialog.getColor(QColor(self.accent.text()),self,"Choose accent color")
+        if color.isValid():self.accent.setText(color.name())
     def save(self):
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}",self.accent.text().strip()):
+            self.status.setText("Accent color must be a six-digit hex color, such as #3c8527.")
+            return
         self.data=load_settings()
-        self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip(),"bedrock_worlds_path":self.bedrock_worlds.text().strip(),"edu_worlds_path":self.edu_worlds.text().strip(),"servli_home":self.servli_home.text().strip()})
+        self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"minimize_on_launch":self.minimize_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip(),"bedrock_worlds_path":self.bedrock_worlds.text().strip(),"edu_worlds_path":self.edu_worlds.text().strip(),"servli_home":self.servli_home.text().strip(),"server_backup_mode":self.backup_mode.currentText(),"server_backup_keep":self.backup_keep.value()})
         for key, field in self.engine_fields.items(): self.data[key]=field.text().strip()
-        save_settings(self.data); apply_environment(self.data); self.status.setText("Settings saved.")
+        self.data.update({"theme":self.theme_choice.currentData(),"accent_color":self.accent.text().strip(),"compact_navigation":self.compact_nav.isChecked(),"show_artwork":self.show_artwork.isChecked(),"startup_page":self.startup.currentText()})
+        save_settings(self.data); apply_environment(self.data)
+        app=QApplication.instance()
+        if app:app.setStyleSheet(stylesheet(self.data))
+        for hero in self.window().findChildren(HeroArt):hero.apply_preference()
+        self.status.setText("Settings saved.")
     def open_data(self):
         from .settings import ROOT
         ROOT.mkdir(parents=True,exist_ok=True)
@@ -1026,7 +1085,10 @@ class SettingsPage(QWidget):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__();self.activity=ActivityManager(self);self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620);self.setAcceptDrops(True)
+        super().__init__();self.activity=ActivityManager(self);self.notifications=NotificationCenter(self);self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620);self.setAcceptDrops(True)
+        self.notifications.posted.connect(lambda message:self.statusBar().showMessage(message,8000))
+        self.activity.finished.connect(lambda item,ok,message:self.notifications.post("activity:"+item, (item+": "+message) if ok else (item+" failed: "+message)) if ok or message else None)
+        self.tray=None
         root=QWidget();layout=QHBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
         account=QFrame();account.setObjectName("account");a=QVBoxLayout(account)
@@ -1042,6 +1104,7 @@ class MainWindow(QMainWindow):
         nav_content=QWidget();nav_layout=QVBoxLayout(nav_content);nav_layout.setContentsMargins(0,0,0,0);nav_layout.setSpacing(0)
         nav_scroll.setWidget(nav_content);r.addWidget(nav_scroll,1)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
+        self.palette_shortcut=QShortcut(QKeySequence("Ctrl+K"),self);self.palette_shortcut.activated.connect(self.open_palette)
         entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Activity","Doctor","Settings")
         for i,label in enumerate(entries):
             display=label.upper() if label in ("Home","Settings","Updates","Activity","Doctor","Worlds") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
@@ -1068,8 +1131,49 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
             if label=="Java":self.java_page=page
             if label=="Servers":self.server_page=page
+            if label=="Servers":page.server_dashboard.unexpected_stop.connect(lambda name:self.notifications.post("server-stopped:"+name,"Server "+name+" stopped unexpectedly"))
+            if label=="Java":page.game_ended.connect(lambda name,result:self.notifications.post("crash:"+name,"Crash detected in "+name) if result.get("diagnosis") else None)
+            if label=="Worlds":page.completed.connect(lambda action:self.notifications.post("world:"+action,"World "+action.lower().removesuffix("...")+" completed") if action.startswith(("Backing up","Restoring","Importing","Exporting")) else None)
             if label=="Story Mode":self.story_page=page
-        nav_layout.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all);QTimer.singleShot(500,self.recover_safe_modes)
+        nav_layout.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root)
+        startup=str(load_settings().get("startup_page") or "Home")
+        self.select(entries.index(startup) if startup in entries else 0)
+        QTimer.singleShot(300,self.refresh_all);QTimer.singleShot(500,self.recover_safe_modes)
+        QTimer.singleShot(1200,self.maybe_onboard)
+    def maybe_onboard(self):
+        current=load_settings()
+        if not self.isVisible() or not current.get("show_onboarding",True) or current.get("onboarding_complete"):
+            return
+        dialog=OnboardingDialog(lambda:first_run_snapshot(home_snapshot),self)
+        dialog.exec()
+        current=load_settings();current["onboarding_complete"]=True;save_settings(current)
+        if dialog.action=="import":
+            self.select_name("Java")
+            self.java_page.switch_view("instances")
+            self.java_page.instances_panel.import_other_launchers()
+        elif dialog.action=="configure":
+            self.select_name("Settings")
+    def open_palette(self):
+        CommandPalette(self).exec()
+    def on_game_launched(self):
+        options=load_settings()
+        if options.get("close_on_launch"):
+            if QSystemTrayIcon.isSystemTrayAvailable():
+                if not self.tray:
+                    self.tray=QSystemTrayIcon(self)
+                    icon=cached_art("Java")
+                    self.tray.setIcon(QIcon(str(icon)) if icon else self.windowIcon())
+                    menu=QMenu(self)
+                    menu.addAction("Show JAVBED",self.showNormal)
+                    menu.addAction("Quit JAVBED",self.close)
+                    self.tray.setContextMenu(menu)
+                    self.tray.activated.connect(lambda *_:self.showNormal())
+                    self.tray.show()
+                self.hide()
+            else:
+                self.showMinimized()
+        elif options.get("minimize_on_launch"):
+            self.showMinimized()
     def recover_safe_modes(self):
         for name, pid in safemode.pending():
             def restore_after_exit(started, code, target=name):
@@ -1113,6 +1217,33 @@ class MainWindow(QMainWindow):
     def select_name(self,name):
         entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Activity","Doctor","Settings")
         if name in entries:self.select(entries.index(name))
+    def open_deep_link(self, uri):
+        try:
+            link=parse_deep_link(uri)
+        except ValueError as exc:
+            self.statusBar().showMessage(str(exc), 8000)
+            return
+        if link.section == "settings":
+            self.select_name("Settings")
+        elif link.section == "java":
+            self.select_name("Java")
+            self.java_page.switch_view("play")
+            self.java_page.channel.setCurrentText("release")
+            self.java_page.version.setEditText(link.value)
+        elif link.section == "instance":
+            self.select_name("Java")
+            self.java_page.switch_view("instances")
+            self.java_page.instances_panel.status.setText(("Instance: " if get_instance(link.value) else "Instance not found: ") + link.value)
+        elif link.section == "server":
+            self.select_name("Servers")
+            self.server_page.switch_view("dashboard")
+            self.server_page.server_dashboard.open_named(link.value)
+        elif link.section == "modrinth":
+            self.select_name("Java")
+            self.java_page.switch_view("mods")
+            self.java_page.mods_panel.provider.setCurrentText("Modrinth")
+            self.java_page.mods_panel.query.setText(link.value)
+            self.java_page.mods_panel.search()
     def play_world(self, world):
         if world.edition == "Java" and world.instance:
             self.select_name("Java")
@@ -1212,5 +1343,11 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 def main():
-    app=QApplication(sys.argv);app.setApplicationName("JAVBED");app.setStyleSheet(STYLE);apply_environment(load_settings());w=MainWindow();w.show();raise SystemExit(app.exec())
+    app=QApplication(sys.argv[:1]);app.setApplicationName("JAVBED");app.setStyleSheet(stylesheet(load_settings()));apply_environment(load_settings());w=MainWindow();w.show()
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        try:register_windows(sys.executable)
+        except OSError:pass
+    if len(sys.argv)>1 and sys.argv[1].lower().startswith("javbed://"):
+        QTimer.singleShot(0,lambda:w.open_deep_link(sys.argv[1]))
+    raise SystemExit(app.exec())
 if __name__=="__main__":main()

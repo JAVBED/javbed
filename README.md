@@ -43,6 +43,12 @@ The **Servers → Dashboard** tab uses SERVLI's structured server and backup lis
 
 The **Activity** page shows downloads and backend jobs, including real byte progress and speed for Story Mode ISOs and managed engine downloads. Jobs without byte reporting show their current stage without an invented percentage. **Updates → UPDATE ALL** checks JAVBED, updates managed engines and tracked Java mods, reports newer compatible modpacks, and updates stopped SERVLI servers where the backend supports an in-place software update. Running servers and BDS version changes are skipped. The **Doctor** page checks network access, account metadata, engines, Java runtimes, paths, bundled artwork, writable data directories, Gaming Services on Windows, and a configured CurseForge API key. Missing engines can be installed from Doctor.
 
+On first run, JAVBED scans for editions, engines, runtimes, Java instances, and installations from the official launcher, Prism Launcher, MultiMC, Modrinth App, and CurseForge. **Import Other Launchers** copies playable user data into JAVLI instances; it does not move originals or copy launcher accounts and Minecraft binaries. You can edit the instance name and Minecraft version before importing. This requires a current JAVLI build with `instance import --data-only` support.
+
+Press **Ctrl+K** to search launcher actions, games, instances, servers, and mods. Windows packaged builds register the per-user `javbed://` protocol on first launch; links for Java versions, instances, servers, Modrinth searches, and Settings open the corresponding launcher view. Settings supports an accent color, compact navigation, artwork preference, startup page, server backup defaults, and launch behavior. Completion and crash notices appear quietly in the status bar.
+
+To use portable mode, create an empty `portable.txt` beside the packaged JAVBED executable before starting it. JAVBED settings, cache, managed engines, and launcher state then use `JAVBED-data` beside the executable. Existing data is left where it is; portable mode does not migrate it automatically. In a source checkout, place `portable.txt` next to `javbed_main.py`.
+
 ## Releases
 
 Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.

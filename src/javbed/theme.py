@@ -1,5 +1,9 @@
 """The original dark JAVBED desktop theme."""
 
+import re
+
+from PySide6.QtGui import QColor
+
 STYLE = """
 QWidget{background:#211f1e;color:white;font-family:'Segoe UI'}
 QFrame#rail{background:#2b2928;border-right:1px solid #111}
@@ -25,3 +29,15 @@ QPlainTextEdit{background:#121212;border:1px solid #333;font-family:Consolas,mon
 QProgressBar{background:#262422;border:1px solid #666;text-align:center;min-height:16px}
 QProgressBar::chunk{background:#54a82f}
 """
+
+
+def stylesheet(settings=None):
+    settings = settings or {}
+    accent = str(settings.get("accent_color") or "#3c8527")
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", accent):
+        accent = "#3c8527"
+    light = QColor(accent).lighter(115).name()
+    style = STYLE.replace("#3c8527", accent).replace("#4c9b35", light).replace("#54a82f", light)
+    if settings.get("compact_navigation"):
+        style = style.replace("padding:15px 13px;font-size:13px", "padding:8px 11px;font-size:12px")
+    return style

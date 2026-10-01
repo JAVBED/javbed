@@ -16,6 +16,7 @@ from .instances import get_instance, remove_preferences, save_icon, save_prefere
 from . import content_registry
 from .packages import export_package, load_package, restore_icon
 from .jobs import Job
+from .launcher_imports import LauncherImportDialog, inspect as inspect_launcher
 
 
 class InstanceWizard(QWizard):
@@ -125,6 +126,10 @@ class InstanceLibrary(QWidget):
         import_button.setObjectName("secondary")
         import_button.clicked.connect(self.import_instance)
         header.addWidget(import_button)
+        other_button = QPushButton("IMPORT OTHER LAUNCHERS")
+        other_button.setObjectName("secondary")
+        other_button.clicked.connect(self.import_other_launchers)
+        header.addWidget(other_button)
         portable_button = QPushButton("IMPORT .JAVBED")
         portable_button.setObjectName("secondary")
         portable_button.clicked.connect(self.import_portable)
@@ -241,8 +246,55 @@ class InstanceLibrary(QWidget):
 
     def import_instance(self):
         path = QFileDialog.getExistingDirectory(self, "Import existing Minecraft instance")
-        if path:
-            self.run(["instance", "import", path])
+        if not path:
+            return
+        job = Job(lambda: inspect_launcher(Path(path)))
+        self.status.setText("Inspecting instance...")
+
+        def inspected(ok, item):
+            if not ok or not item:
+                self.status.setText("This folder is not a supported launcher instance.")
+                return
+            name, accepted = QInputDialog.getText(self, "Import Instance", "New instance name", text=item.name)
+            if not accepted:
+                return
+            name = name.strip()
+            if not valid_name(name) or get_instance(name):
+                self.status.setText("Choose a unique valid instance name.")
+                return
+            version, accepted = QInputDialog.getText(self, "Import Instance", "Minecraft version", text=item.version)
+            if not accepted or not version.strip():
+                return
+            self.run(["instance", "import", path, "--name", name, "--version", version.strip(), "--data-only"])
+
+        job.signals.done.connect(inspected)
+        self.pool.start(job)
+
+    def import_other_launchers(self):
+        dialog = LauncherImportDialog(self)
+        if not dialog.exec():
+            return
+        queue = dialog.selected()
+        failures = []
+
+        def next_item():
+            if not queue:
+                self.status.setText(("Launcher imports finished with failures: " + ", ".join(failures)) if failures else "Launcher imports finished. Originals were not modified.")
+                self.refresh()
+                return
+            candidate, name, version = queue.pop(0)
+            self.status.setText("Importing " + candidate.name + "...")
+            args = ["instance", "import", str(candidate.path), "--name", name, "--version", version, "--data-only"]
+
+            def finished(ok, output):
+                if not ok:
+                    failures.append(name)
+                    self.status.setText("Import failed for " + name + ": " + output.strip()[-180:])
+                next_item()
+
+            self.run_command(args, finished)
+
+        next_item()
 
     def show_menu(self, button, item):
         menu = QMenu(self)

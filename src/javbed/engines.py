@@ -12,8 +12,9 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from . import settings
 
-ROOT = Path(os.getenv("LOCALAPPDATA") or (Path.home() / ".local" / "share")) / "JAVBED"
+ROOT = settings.ROOT
 ENGINE_ROOT = ROOT / "engines"
 API = "https://api.github.com/repos/JAVBED/{repo}/releases/latest"
 

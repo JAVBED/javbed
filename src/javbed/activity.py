@@ -27,6 +27,7 @@ class Activity:
 
 class ActivityManager(QObject):
     changed = Signal()
+    finished = Signal(str, bool, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,6 +68,7 @@ class ActivityManager(QObject):
             entry.stage = message or ("Completed" if success else "Failed")
             entry.cancel = None
             self.changed.emit()
+            self.finished.emit(entry.item, success, entry.stage)
 
 
 class ActivityPage(QWidget):
