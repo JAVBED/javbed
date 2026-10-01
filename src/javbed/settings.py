@@ -25,6 +25,8 @@ DEFAULTS = {
     "game_dungeons_path": "",
     "game_dungeons2_path": "",
     "game_legends_path": "",
+    "bedrock_worlds_path": "",
+    "edu_worlds_path": "",
 }
 def load():
     data=dict(DEFAULTS)

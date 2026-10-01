@@ -65,7 +65,7 @@ class UiTests(unittest.TestCase):
             window = MainWindow()
             window.show()
             self.app.processEvents()
-            self.assertEqual(window.stack.count(), 12)
+            self.assertEqual(window.stack.count(), 13)
             window.select_name("Java")
             window.java_page.switch_view("instances")
             self.assertTrue(window.java_page.instances_panel.isVisible())

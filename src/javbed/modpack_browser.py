@@ -243,8 +243,9 @@ class ModpackBrowser(QWidget):
 
         self.run_command(command, created)
 
-    def open_mrpack(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open Modrinth Pack", "", "Modrinth packs (*.mrpack)")
+    def open_mrpack(self, path=""):
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Open Modrinth Pack", "", "Modrinth packs (*.mrpack)")
         if not path or self.job:
             return
         source = Path(path)

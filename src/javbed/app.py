@@ -3,7 +3,7 @@ import os, re, shutil, subprocess, sys, threading
 from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, QThreadPool, QTimer, Signal, Qt
 from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget, QInputDialog
 from .engines import ENGINES
 from . import history
 from .accounts import active_account, avatar_path
@@ -13,6 +13,7 @@ from .home import HomePage
 from .instance_library import InstanceLibrary
 from .content_browser import ContentBrowser
 from .modpack_browser import ModpackBrowser
+from .world_page import WorldPage
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
@@ -342,9 +343,9 @@ class StoryModePage(QWidget):
             self.cancel_download.setEnabled(False)
             self.state.setText("Pausing download...")
             self.download_job.cancelled.set()
-    def install_iso(self):
+    def install_iso(self, iso=""):
         if sys.platform!="win32":self.state.setText("ISO installation is currently Windows-only.");return
-        iso,_=QFileDialog.getOpenFileName(self,"Select Story Mode ISO","","ISO images (*.iso);;All files (*)")
+        if not iso:iso,_=QFileDialog.getOpenFileName(self,"Select Story Mode ISO","","ISO images (*.iso);;All files (*)")
         if not iso:return
         self.iso_button.setEnabled(False);self.state.setText("Mounting ISO...")
         job=Job(lambda:mount_story_iso(iso));self.iso_job=job
@@ -780,6 +781,10 @@ class SettingsPage(QWidget):
         self.java_runtime = QLineEdit(str(self.data["java_runtime"]))
         self.curseforge = QLineEdit(str(self.data["curseforge_api_key"])); self.curseforge.setEchoMode(QLineEdit.EchoMode.Password)
         form.addRow("Java memory", self.memory); form.addRow("Window width", self.width); form.addRow("Window height", self.height); form.addRow("Fullscreen", self.fullscreen); form.addRow("Close launcher on game start", self.close_on_launch); form.addRow("Check for updates", self.check_updates); form.addRow("Minecraft directory", self.minecraft_dir); form.addRow("Java runtime", self.java_runtime); form.addRow("CurseForge API key", self.curseforge)
+        self.bedrock_worlds = QLineEdit(str(self.data.get("bedrock_worlds_path", "")))
+        self.edu_worlds = QLineEdit(str(self.data.get("edu_worlds_path", "")))
+        form.addRow("Bedrock worlds folder", self.bedrock_worlds)
+        form.addRow("EDU worlds folder", self.edu_worlds)
         self.engine_fields = {}
         for label, key in (("JAVLI path","engine_java"),("BEDLI path","engine_bedrock"),("EDULI path","engine_edu"),("LEGLI path","engine_lce"),("SERVLI path","engine_servers")):
             field = QLineEdit(str(self.data.get(key,""))); self.engine_fields[key]=field; form.addRow(label, field)
@@ -791,7 +796,7 @@ class SettingsPage(QWidget):
         self.status = QLabel(""); root.addWidget(self.status); root.addStretch()
     def save(self):
         self.data=load_settings()
-        self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip()})
+        self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip(),"bedrock_worlds_path":self.bedrock_worlds.text().strip(),"edu_worlds_path":self.edu_worlds.text().strip()})
         for key, field in self.engine_fields.items(): self.data[key]=field.text().strip()
         save_settings(self.data); apply_environment(self.data); self.status.setText("Settings saved.")
     def open_data(self):
@@ -803,7 +808,7 @@ class SettingsPage(QWidget):
 
 class MainWindow(QMainWindow):
     def __init__(self):
-        super().__init__();self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620)
+        super().__init__();self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620);self.setAcceptDrops(True)
         root=QWidget();layout=QHBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
         account=QFrame();account.setObjectName("account");a=QVBoxLayout(account)
@@ -814,11 +819,11 @@ class MainWindow(QMainWindow):
         a.addWidget(self.account_button)
         r.addWidget(account)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Servers","Updates","Settings")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Settings")
         for i,label in enumerate(entries):
-            display=label.upper() if label in ("Home","Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
+            display=label.upper() if label in ("Home","Settings","Updates","Worlds") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
             b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
-            page=HomePage(self, home_snapshot) if label=="Home" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label)))));self.pages.append(page);self.stack.addWidget(page)
+            page=HomePage(self, home_snapshot) if label=="Home" else (WorldPage(self.play_world, self) if label=="Worlds" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label))))));self.pages.append(page);self.stack.addWidget(page)
             if label=="Java":self.java_page=page
             if label=="Story Mode":self.story_page=page
         r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)
@@ -855,8 +860,91 @@ class MainWindow(QMainWindow):
             if isinstance(p,GamePage):p.startup_refresh()
             elif isinstance(p,ExtraPage):p.refresh()
     def select_name(self,name):
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Servers","Updates","Settings")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Settings")
         if name in entries:self.select(entries.index(name))
+    def play_world(self, world):
+        if world.edition == "Java" and world.instance:
+            self.select_name("Java")
+            self.java_page.run(["instance", "launch", world.instance])
+        elif world.edition == "Java":
+            self.select_name("Java")
+            self.java_page.run(["release", world.version or "latest"])
+        elif world.edition in ("Bedrock", "EDU"):
+            self.select_name(world.edition)
+            page = self.pages[self.stack.currentIndex()]
+            if world.edition == "Bedrock":
+                page.run(["release", "latest"])
+            else:
+                page.run([page.version.currentText().strip()])
+    def dragEnterEvent(self, event):
+        supported = {".jar", ".mrpack", ".javbed", ".zip", ".iso"}
+        if event.mimeData().hasUrls() and any(Path(url.toLocalFile()).suffix.lower() in supported for url in event.mimeData().urls() if url.isLocalFile()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                self.open_dropped_file(Path(url.toLocalFile()))
+        event.acceptProposedAction()
+
+    def open_dropped_file(self, source):
+        if not source.is_file():
+            return
+        suffix = source.suffix.lower()
+        if suffix == ".javbed":
+            self.select_name("Java")
+            self.java_page.switch_view("instances")
+            self.java_page.instances_panel.import_portable(str(source))
+        elif suffix == ".mrpack":
+            self.select_name("Java")
+            self.java_page.switch_view("modpacks")
+            self.java_page.modpacks_panel.open_mrpack(str(source))
+        elif suffix == ".iso":
+            self.select_name("Story Mode")
+            self.story_page.install_iso(str(source))
+        elif suffix == ".zip":
+            choice, ok = QInputDialog.getItem(self, "Install ZIP", source.name + " is a:", ["World", "Resource pack", "Shader pack"], 0, False)
+            if not ok:return
+            if choice == "World":
+                self.select_name("Worlds")
+                self.pages[self.stack.currentIndex()].import_zip(str(source))
+            else:
+                self.copy_addon(source, "resourcepacks" if choice == "Resource pack" else "shaderpacks")
+        elif suffix == ".jar":
+            self.copy_addon(source, "mods")
+
+    def copy_addon(self, source, folder):
+        from .instances import list_instances
+        rows = list_instances()
+        names = [str(row["name"]) for row in rows]
+        if not names:
+            self.select_name("Java")
+            self.java_page.switch_view("instances")
+            return
+        name, ok = QInputDialog.getItem(self, "Choose Java instance", "Install " + source.name + " into", names, 0, False)
+        if not ok:return
+        instance = next(row for row in rows if row["name"] == name)
+        destination = Path(str(instance["path"])) / "minecraft" / folder / source.name
+        if destination.exists():
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Already installed", source.name + " already exists in " + name + ".")
+            return
+        job = Job(lambda: self._copy_addon_file(source, destination))
+        job.signals.done.connect(lambda success, result: self.java_page.status.setText(("Installed " if success else "Install failed: ") + str(result)[:180]))
+        self.java_page.pool.start(job)
+        self.select_name("Java")
+
+    @staticmethod
+    def _copy_addon_file(source, destination):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with source.open("rb") as original, destination.open("xb") as target:
+            try:
+                shutil.copyfileobj(original, target)
+            except Exception:
+                target.close()
+                destination.unlink(missing_ok=True)
+                raise
+        return destination.name
     def select(self,i):
         self.stack.setCurrentIndex(i)
         for n,b in enumerate(self.buttons):b.setChecked(n==i)

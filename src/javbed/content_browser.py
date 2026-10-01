@@ -263,6 +263,7 @@ class ContentBrowser(QWidget):
                 self.status.setText(str(version) if not ok else "No compatible version exists for this instance.")
                 return
             command = [COMMANDS[self.kind], "install", hit["id"], "--instance", item["name"]]
+            command += (["--file-id", version["id"]] if hit["provider"] == "curseforge" else ["--version-id", version["id"]])
             if self.kind == "mod":
                 command += ["--minecraft", str(item["version"]), "--loader", loader]
                 if hit["provider"] == "curseforge":
@@ -471,6 +472,7 @@ class ContentBrowser(QWidget):
                     self.pool.start(final_job)
 
                 command = [COMMANDS[self.kind], "install", hit["id"], "--instance", item["name"]]
+                command += (["--file-id", version["id"]] if hit["provider"] == "curseforge" else ["--version-id", version["id"]])
                 if self.kind == "mod":
                     command += ["--minecraft", str(item["version"]), "--loader", loader]
                     if hit["provider"] == "curseforge":

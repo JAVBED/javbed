@@ -33,6 +33,10 @@ The Java **Instances** tab lists JAVLI instances as cards with version, loader, 
 
 The Java **Mods**, **Modpacks**, **Resource Packs**, and **Shaders** tabs browse compatible projects with graphical cards. Mods and modpacks support Modrinth and CurseForge search; CurseForge needs an API key in Settings. Install actions check the exact Minecraft version and loader before asking JAVLI to install. The Installed view can enable, disable, update, and remove tracked mods; updates keep a safety copy until the replacement succeeds. Modpacks create isolated JAVLI instances, and the Modpacks tab can open a local `.mrpack`. Current JAVLI source is required for local pack import and explicit pack-version selection. Shader installation explains when a shader loader is missing and can install compatible Iris through JAVLI for supported loaders.
 
+The **Worlds** page finds vanilla Java and JAVLI worlds, plus accessible Bedrock and Education worlds. It can back up, restore, duplicate, export, import, open, launch, and move worlds to JAVBED's recoverable trash. Restore creates a fresh backup first. You can set Bedrock and Education world folders in Settings if automatic discovery cannot reach them.
+
+Java instances can be exported as versioned `.javbed` packages and reconstructed through JAVLI. Packages contain metadata and provider references, never Minecraft binaries or local mod files. The manifest lists local files that need manual reinstallation. Drag `.javbed`, `.mrpack`, mod JARs, resource pack ZIPs, shader ZIPs, world ZIPs, or Story Mode ISOs onto the window to open the corresponding import flow.
+
 ## Releases
 
 Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.
