@@ -77,6 +77,24 @@ class UiTests(unittest.TestCase):
             self.assertEqual(page.playbar.height(), 58)
             self.assertEqual(page.play_button.width(), 235)
             self.assertEqual(page.news.height(), 137)
+            for name in ("Bedrock", "EDU", "LCE", "Dungeons", "Dungeons 2", "Legends", "Story Mode"):
+                window.select_name(name)
+                self.app.processEvents()
+                game = window.pages[window.stack.currentIndex()]
+                self.assertEqual(game.findChild(type(page.top), "topbar").height(), 79, name)
+                self.assertLessEqual(abs(game.hero.height() - 446), 2, name)
+                self.assertEqual(game.playbar.height(), 58, name)
+                button = game.play_button if hasattr(game, "play_button") else game.play
+                self.assertEqual(button.size().width(), 235, name)
+                self.assertLessEqual(abs(button.y() - 501), 2, name)
+            window.select_name("Bedrock")
+            bedrock = window.pages[window.stack.currentIndex()]
+            bedrock.channel_menu.actions()[1].trigger()
+            self.assertEqual(bedrock.channel.currentText(), "beta")
+            window.select_name("Story Mode")
+            window.story_page.season.setCurrentIndex(1)
+            self.assertEqual(window.story_page.title(), "Story Mode 2")
+            window.select_name("Java")
             page.version.addItem("Instance: survival", ("instance", "survival"))
             with patch.object(page, "run") as launch:
                 page.choose_installation(page.version.count() - 1)

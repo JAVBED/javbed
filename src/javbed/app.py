@@ -245,6 +245,38 @@ def mount_story_iso(iso):
     if not installer:raise RuntimeError("Mounted ISO, but no installer executable was found.")
     return installer
 
+def edition_header(label):
+    frame=QFrame();frame.setObjectName("topbar");frame.setFixedHeight(79)
+    column=QVBoxLayout(frame);column.setContentsMargins(20,23,0,0);column.setSpacing(0)
+    heading=QLabel("MINECRAFT: " + {"EDU":"EDUCATION EDITION","LCE":"LEGACY CONSOLE EDITION","Dungeons 2":"DUNGEONS II","Story Mode":"STORY MODE","Dungeons":"DUNGEONS","Legends":"LEGENDS"}.get(label,label.upper() + " EDITION"))
+    heading.setObjectName("javaHeading");heading.setFixedHeight(18);column.addWidget(heading)
+    row=QHBoxLayout();row.setContentsMargins(0,0,0,0);row.setSpacing(8)
+    play=QPushButton("Play");play.setObjectName("tab");play.setCheckable(True);play.setChecked(True);play.setFixedHeight(36);play.clicked.connect(lambda:play.setChecked(True));row.addWidget(play);row.addStretch();column.addLayout(row)
+    return frame
+
+
+def position_hero_play(page):
+    if not page.hero.isVisible():return
+    hero=page.hero.geometry()
+    page.play.setGeometry((page.width()-235)//2-5,hero.y()+hero.height()-24,235,51)
+    page.play.show();page.play.raise_()
+
+
+def action_art_card(title, art, callback, height=102):
+    card=QPushButton();card.setObjectName("newsCard");card.setFixedSize(300,height);card.setToolTip(title);card.setAccessibleName(title)
+    canvas=QPixmap(296,height-4);canvas.fill(QColor("#292625"))
+    source=cached_art(art)
+    if source:
+        pix=QPixmap(str(source))
+        if not pix.isNull():
+            scaled=pix.scaled(canvas.size(),Qt.AspectRatioMode.KeepAspectRatioByExpanding,Qt.TransformationMode.SmoothTransformation)
+            painter=QPainter(canvas);painter.drawPixmap(0,0,scaled.copy(max(0,(scaled.width()-canvas.width())//2),max(0,(scaled.height()-canvas.height())//2),canvas.width(),canvas.height()));painter.end()
+    painter=QPainter(canvas);painter.fillRect(0,canvas.height()-34,canvas.width(),34,QColor(0,0,0,185))
+    font=painter.font();font.setPixelSize(15);font.setBold(True);painter.setFont(font);painter.setPen(QColor("#ffffff"));painter.drawText(14,canvas.height()-11,title);painter.end()
+    card.setIcon(QIcon(canvas));card.setIconSize(canvas.size());card.clicked.connect(callback)
+    return card
+
+
 class ExtraPage(QWidget):
     def __init__(self,label):
         super().__init__();self.label=label;self.pool=QThreadPool.globalInstance();self.launch_target=None;self.helper_available=False;self.scan_job=None
@@ -253,14 +285,23 @@ class ExtraPage(QWidget):
         hero = HeroArt(label)
         self.hero = hero
         root.addWidget(hero, 1)
-        bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(35,10,35,10);self.state=QLabel();b.addWidget(self.state);b.addStretch()
-        self.locate_button=QPushButton("LOCATE GAME");self.locate_button.setObjectName("secondary");self.locate_button.clicked.connect(self.locate);b.addWidget(self.locate_button)
-        self.play=QPushButton("PLAY");self.play.setObjectName("play");self.play.clicked.connect(self.launch);b.addWidget(self.play);root.addWidget(bar);self.refresh()
+        bar=QFrame();bar.setObjectName("playbar");bar.setFixedHeight(58);self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(5,3,12,5)
+        selector=InstallationFrame();selector.setObjectName("installationSelector");selector.setFixedSize(280,48)
+        choice=QHBoxLayout(selector);choice.setContentsMargins(14,0,8,0);choice.setSpacing(14)
+        icon=QLabel();icon.setPixmap(game_icon(label,24).pixmap(24,24));icon.setFixedSize(24,24);choice.addWidget(icon)
+        info=QVBoxLayout();info.setSpacing(0);info.setContentsMargins(0,0,0,0)
+        title=QLabel(label);title.setObjectName("installationTitle");info.addWidget(title)
+        self.state=QLabel();self.state.setObjectName("small");info.addWidget(self.state);choice.addLayout(info,1);b.addWidget(selector);b.addStretch();root.addWidget(bar)
+        self.play=QPushButton("PLAY",self);self.play.setObjectName("play");self.play.setFixedSize(235,51);self.play.clicked.connect(self.launch)
+        self.locate_button=action_art_card("Locate game",label,self.locate)
+        news=QFrame();news.setObjectName("newsSurface");news.setFixedHeight(137);row=QHBoxLayout(news);row.setContentsMargins(57,22,57,8);row.setSpacing(40)
+        row.addWidget(self.locate_button);row.addWidget(action_art_card("Updates","Dungeons",lambda:self.window().select_name("Updates")));row.addWidget(action_art_card("Settings","Java",lambda:self.window().select_name("Settings")));root.addWidget(news)
+        self.refresh()
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0,lambda:position_hero_play(self))
     def topbar(self):
-        f=QFrame();f.setObjectName("topbar");l=QHBoxLayout(f);l.setContentsMargins(18,5,18,5)
-        for text in ("Play",):
-            b=QPushButton(text);b.setObjectName("tab");b.setCheckable(True);b.setChecked(text=="Play");l.addWidget(b)
-        l.addStretch();return f
+        return edition_header(self.label)
     def refresh(self):
         if self.scan_job:return
         self.state.setText("Checking installation...");self.play.setEnabled(False);self.locate_button.setEnabled(False)
@@ -316,18 +357,26 @@ class ExtraPage(QWidget):
 class StoryModePage(QWidget):
     def __init__(self, activity=None):
         super().__init__();self.activity=activity;self.paths=load_settings();self.pool=QThreadPool.globalInstance();self.download_job=None;self.iso_job=None;root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
-        top=QFrame();top.setObjectName("topbar");tl=QHBoxLayout(top);tl.setContentsMargins(18,5,18,5);tl.addWidget(QLabel("Story Mode"));tl.addStretch();root.addWidget(top)
+        root.addWidget(edition_header("Story Mode"))
         self.hero=HeroArt("Story Mode");root.addWidget(self.hero,1)
-        bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8)
-        self.season=QComboBox();self.season.addItems(["Season 1","Season 2"]);self.season.currentIndexChanged.connect(self.refresh);b.addWidget(self.season)
-        self.state=QLabel();b.addWidget(self.state);b.addStretch()
-        locate=QPushButton("LOCATE INSTALLATION");locate.setObjectName("secondary");locate.clicked.connect(self.locate);b.addWidget(locate)
-        self.download=QPushButton("DOWNLOAD ISO");self.download.setObjectName("secondary");self.download.clicked.connect(self.download_selected);b.addWidget(self.download)
-        self.iso_button=QPushButton("INSTALL FROM ISO");self.iso_button.setObjectName("secondary");self.iso_button.clicked.connect(self.install_iso);b.addWidget(self.iso_button)
-        self.play=QPushButton("PLAY");self.play.setObjectName("play");self.play.clicked.connect(self.launch);b.addWidget(self.play);root.addWidget(bar)
+        bar=QFrame();bar.setObjectName("playbar");bar.setFixedHeight(58);self.playbar=bar;b=QHBoxLayout(bar);b.setContentsMargins(5,3,12,5)
+        selector=InstallationFrame();selector.setObjectName("installationSelector");selector.setFixedSize(280,48);srow=QHBoxLayout(selector);srow.setContentsMargins(14,0,8,4);srow.setSpacing(14)
+        icon=QLabel();icon.setPixmap(game_icon("Story Mode",24).pixmap(24,24));icon.setFixedSize(24,24);srow.addWidget(icon)
+        detail=QVBoxLayout();detail.setSpacing(0);detail.setContentsMargins(0,0,0,0)
+        title=QLabel("Minecraft: Story Mode");title.setObjectName("installationTitle");detail.addWidget(title)
+        self.season=QComboBox();self.season.setObjectName("installationVersion");self.season.setFixedHeight(22);self.season.addItems(["Season 1","Season 2"]);self.season.currentIndexChanged.connect(self.refresh);selector.version=self.season;detail.addWidget(self.season);srow.addLayout(detail,1);b.addWidget(selector);b.addStretch()
+        self.state=QLabel();self.state.setObjectName("small");b.addWidget(self.state);root.addWidget(bar)
+        self.play=QPushButton("PLAY",self);self.play.setObjectName("play");self.play.setFixedSize(235,51);self.play.clicked.connect(self.launch)
+        news=QFrame();news.setObjectName("newsSurface");news.setFixedHeight(137);n=QVBoxLayout(news);n.setContentsMargins(57,15,57,10);n.setSpacing(8);actions=QHBoxLayout();actions.setSpacing(40)
+        actions.addWidget(action_art_card("Locate installation","Story Mode",self.locate,76))
+        self.download=action_art_card("Download ISO","Bedrock",self.download_selected,76);actions.addWidget(self.download)
+        self.iso_button=action_art_card("Install from ISO","LCE",self.install_iso,76);actions.addWidget(self.iso_button);n.addLayout(actions)
         progress_row=QHBoxLayout();self.progress=QProgressBar();self.progress.setRange(0,100);self.progress.hide();progress_row.addWidget(self.progress)
         self.cancel_download=QPushButton("PAUSE DOWNLOAD");self.cancel_download.setObjectName("secondary");self.cancel_download.hide();self.cancel_download.clicked.connect(self.pause_download);progress_row.addWidget(self.cancel_download)
-        root.addLayout(progress_row);self.refresh()
+        n.addLayout(progress_row);root.addWidget(news);self.refresh()
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0,lambda:position_hero_play(self))
     def key(self):return "story_mode_s1_path" if self.season.currentIndex()==0 else "story_mode_s2_path"
     def title(self):return "Story Mode" if self.season.currentIndex()==0 else "Story Mode 2"
     def detect(self, season_index=None):
@@ -407,14 +456,15 @@ class GamePage(QWidget):
         self.output.setReadOnly(True)
         self.output.hide()
         bar=QFrame();bar.setObjectName("playbar");self.playbar=bar;b=QHBoxLayout(bar)
-        b.setContentsMargins(5 if label=="Java" else 28,3 if label=="Java" else 8,12 if label=="Java" else 28,5 if label=="Java" else 8)
+        b.setContentsMargins(5 if label in ("Java","Bedrock","EDU","LCE") else 28,3 if label in ("Java","Bedrock","EDU","LCE") else 8,12 if label in ("Java","Bedrock","EDU","LCE") else 28,5 if label in ("Java","Bedrock","EDU","LCE") else 8)
         self.controls=QHBoxLayout();self.controls.setContentsMargins(0,0,0,0);b.addLayout(self.controls,1)
         self.build_controls()
-        if label=="Java":
+        if label in ("Java","Bedrock","EDU","LCE"):
             bar.setFixedHeight(58)
-            self.play_account=QLabel("")
-            self.play_account.setObjectName("small")
-            b.addWidget(self.play_account)
+            if label=="Java":
+                self.play_account=QLabel("")
+                self.play_account.setObjectName("small")
+                b.addWidget(self.play_account)
         root.addWidget(bar)
         if self.label == "Java":
             self.build_mods()
@@ -442,6 +492,10 @@ class GamePage(QWidget):
             self.status.text_changed.connect(self.show_launch_status)
             self.build_java_news()
             QTimer.singleShot(200,self.refresh_instance_choices)
+        elif label in ("Bedrock","EDU","LCE"):
+            wrap.hide()
+            self.status.text_changed.connect(self.show_launch_status)
+            self.build_edition_news()
         self.refresh_state()
     def show_launch_status(self, message):
         window=self.window()
@@ -468,6 +522,20 @@ class GamePage(QWidget):
             row.addWidget(card)
         self.news=news
         self.root.addWidget(news)
+    def build_edition_news(self):
+        news=QFrame(self);news.setObjectName("newsSurface");news.setFixedHeight(137)
+        row=QHBoxLayout(news);row.setContentsMargins(57,22,57,8);row.setSpacing(40)
+        if self.label=="LCE":
+            self.name.setParent(self);self.name.hide()
+            for title,callback in (("Player name",self.edit_lce_name),("Your worlds",lambda:self.window().select_name("Worlds")),("Updates",lambda:self.window().select_name("Updates"))):
+                row.addWidget(action_art_card(title,self.label,callback))
+        else:
+            for title,art,target in (("Your worlds",self.label,"Worlds"),("Updates","Dungeons","Updates"),("Settings","Java","Settings")):
+                row.addWidget(action_art_card(title,art,lambda checked=False,name=target:self.window().select_name(name)))
+        self.news=news;self.root.addWidget(news)
+    def edit_lce_name(self):
+        value,ok=QInputDialog.getText(self,"Legacy Console player name","Player name",text=self.name.text())
+        if ok:self.name.setText(value)
     def open_news_target(self,target):
         window=self.window()
         if target=="mods":
@@ -510,7 +578,7 @@ class GamePage(QWidget):
         else:
             self.run([self.channel.currentText(),self.version.currentText().strip()])
     def position_play_button(self):
-        if self.label!="Java" or not hasattr(self,"play_button"):
+        if self.label not in ("Java","Bedrock","EDU","LCE") or not hasattr(self,"play_button"):
             return
         hero=self.hero.geometry()
         self.play_button.setGeometry((self.width()-235)//2-5,hero.y()+hero.height()-24,235,51)
@@ -518,17 +586,17 @@ class GamePage(QWidget):
         self.play_button.raise_()
     def resizeEvent(self,event):
         super().resizeEvent(event)
-        if self.label=="Java":
+        if self.label in ("Java","Bedrock","EDU","LCE"):
             QTimer.singleShot(0,self.position_play_button)
     def topbar(self):
         frame = QFrame()
         frame.setObjectName("topbar")
-        if self.label=="Java":
+        if self.label in ("Java","Bedrock","EDU","LCE"):
             frame.setFixedHeight(79)
             column=QVBoxLayout(frame)
             column.setContentsMargins(20,23,0,0)
             column.setSpacing(0)
-            heading=QLabel("MINECRAFT: JAVA EDITION")
+            heading=QLabel("MINECRAFT: " + {"Java":"JAVA EDITION","Bedrock":"BEDROCK EDITION","EDU":"EDUCATION EDITION","LCE":"LEGACY CONSOLE EDITION"}[self.label])
             heading.setObjectName("javaHeading")
             heading.setFixedHeight(18)
             column.addWidget(heading)
@@ -536,7 +604,7 @@ class GamePage(QWidget):
             layout.setContentsMargins(0,0,0,0)
             layout.setSpacing(8)
             column.addLayout(layout)
-            tabs=(("Play","play"),("Installations","instances"),("Mods","mods"),("Modpacks","modpacks"))
+            tabs=(("Play","play"),("Installations","instances"),("Mods","mods"),("Modpacks","modpacks")) if self.label=="Java" else (("Play","play"),)
         else:
             layout=QHBoxLayout(frame)
             layout.setContentsMargins(18,5,18,5)
@@ -547,11 +615,11 @@ class GamePage(QWidget):
             button.setObjectName("tab")
             button.setCheckable(True)
             button.setChecked(key == "play")
-            if self.label=="Java":button.setFixedHeight(36)
+            if self.label in ("Java","Bedrock","EDU","LCE"):button.setFixedHeight(36)
             button.clicked.connect(lambda checked=False, view=key: self.switch_view(view))
             layout.addWidget(button)
             self.tab_buttons[key] = button
-        if self.label=="Java":
+        if self.label in ("Java","Bedrock","EDU","LCE"):
             more=QToolButton(frame)
             more.setText("More  ▾")
             more.setObjectName("tab")
@@ -559,11 +627,13 @@ class GamePage(QWidget):
             more.setFixedHeight(36)
             more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             menu=QMenu(more)
-            for title,key in (("Resource Packs","resources"),("Shaders","shaders"),("Accounts","accounts")):
-                menu.addAction(title,lambda checked=False,selected=key:self.switch_view(selected))
-            menu.addSeparator()
-            self.channel_menu=menu.addMenu("Version channel")
-            menu.addAction("Install / Update Java Engine",lambda:self.install_engine())
+            if self.label=="Java":
+                for title,key in (("Resource Packs","resources"),("Shaders","shaders"),("Accounts","accounts")):
+                    menu.addAction(title,lambda checked=False,selected=key:self.switch_view(selected))
+                menu.addSeparator()
+            if self.label in ("Java","Bedrock"):
+                self.channel_menu=menu.addMenu("Version channel")
+            menu.addAction("Install / Update " + self.label + " Engine",lambda:self.install_engine())
             menu.addAction("Runtime and engine settings",lambda:self.window().select_name("Settings"))
             more.setMenu(menu)
             layout.addWidget(more)
@@ -581,6 +651,7 @@ class GamePage(QWidget):
             for name, button in self.tab_buttons.items(): button.setChecked(name == key)
             return
         if self.label != "Java":
+            if key == "play":self.tab_buttons["play"].setChecked(True)
             return
         self.hero.setVisible(key == "play")
         self.playbar.setVisible(key == "play")
@@ -739,6 +810,16 @@ class GamePage(QWidget):
 
     def combo(self,items=(),editable=True):c=QComboBox();c.setEditable(editable);c.addItems(items);return c
     def button(self,text,fn,play=False):b=QPushButton(text);b.setObjectName("play" if play else "secondary");b.clicked.connect(fn);return b
+    def edition_selector(self, choice, title):
+        selector=InstallationFrame();selector.setObjectName("installationSelector");selector.setFixedSize(280,48)
+        row=QHBoxLayout(selector);row.setContentsMargins(14,0,8,4);row.setSpacing(14)
+        icon=QLabel();icon.setObjectName("installationIcon");icon.setPixmap(game_icon(self.label,24).pixmap(24,24));icon.setFixedSize(24,24);icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);row.addWidget(icon)
+        detail=QVBoxLayout();detail.setContentsMargins(0,0,0,0);detail.setSpacing(0)
+        heading=QLabel(title);heading.setObjectName("installationTitle");heading.setFixedHeight(17);heading.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents);detail.addWidget(heading);self.edition_title=heading
+        choice.setObjectName("installationVersion");choice.setFixedHeight(22);selector.version=choice;detail.addWidget(choice);row.addLayout(detail,1)
+        self.controls.addWidget(selector);self.controls.addStretch()
+    def edition_play(self,callback):
+        self.play_button=self.button("PLAY",callback,True);self.play_button.setParent(self);self.play_button.setFixedSize(235,51)
     def build_controls(self):
         if self.label=="Java":
             self.channel=self.combo(["release","snapshot","beta","alpha","infdev","indev","classic","preclassic"],False)
@@ -787,11 +868,16 @@ class GamePage(QWidget):
             self.channel.currentTextChanged.connect(self.refresh_java_versions)
             self.channel.currentTextChanged.connect(lambda _:self.clear_selected_instance())
         elif self.label=="Bedrock":
-            self.channel=self.combo(["release","beta","preview"],False);self.version=self.combo([],True);self.controls.addWidget(self.version);self.controls.addWidget(self.channel);self.controls.addStretch();self.controls.addWidget(self.button("PLAY",lambda:self.run([self.channel.currentText(),self.version.currentText().strip()]),True))
+            self.channel=self.combo(["release","beta","preview"],False);self.channel.setParent(self);self.channel.hide()
+            for value in ("release","beta","preview"):
+                self.channel_menu.addAction(value.title(),lambda checked=False,selected=value:self.channel.setCurrentText(selected))
+            self.version=self.combo([],True);self.version.lineEdit().setPlaceholderText("Choose version")
+            self.edition_selector(self.version,"Latest release");self.edition_play(lambda:self.run([self.channel.currentText(),self.version.currentText().strip()]))
+            self.channel.currentTextChanged.connect(lambda value:self.edition_title.setText("Latest release" if value=="release" else value.title()))
         elif self.label=="EDU":
-            self.version=self.combo(["1.8.9","1.7.10"],True);self.controls.addWidget(self.version);self.controls.addStretch();self.controls.addWidget(self.button("PLAY",lambda:self.run([self.version.currentText().strip()]),True))
+            self.version=self.combo(["1.8.9","1.7.10"],True);self.edition_selector(self.version,"Minecraft Education");self.edition_play(lambda:self.run([self.version.currentText().strip()]))
         elif self.label=="LCE":
-            self.source=self.combo(["verified","nightly-revelations","nightly-mclce"],False);self.name=QLineEdit();self.name.setPlaceholderText("Player name");self.controls.addWidget(self.source);self.controls.addWidget(self.name);self.controls.addStretch();self.controls.addWidget(self.button("PLAY",self.lce,True))
+            self.source=self.combo(["verified","nightly-revelations","nightly-mclce"],False);self.name=QLineEdit();self.name.setPlaceholderText("Player name");self.edition_selector(self.source,"Legacy Console Edition");self.edition_play(self.lce)
         else:
             self.server=QLineEdit();self.server.setPlaceholderText("Server name");self.provider=self.combo(["paper","purpur","vanilla","fabric","quilt","forge","neoforge","bds","pocketmine","powernukkitx"],False);self.version=self.combo([],False);self.provider.currentTextChanged.connect(self.refresh_server_versions)
             for w in (self.server,self.provider,self.version):self.controls.addWidget(w)
