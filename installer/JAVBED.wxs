@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="JAVBED Launcher" Manufacturer="JAVBED" Version="$(var.Version)"
+           UpgradeCode="E9B42D15-7017-40D1-B1A3-2EB7266BED76" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer JAVBED version is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="JAVBED">
+        <Directory Id="EngineRoot" Name="engines">
+          <Directory Id="JavliDir" Name="javli" />
+          <Directory Id="BedliDir" Name="bedli" />
+          <Directory Id="EduliDir" Name="eduli" />
+          <Directory Id="LegliDir" Name="legli" />
+          <Directory Id="ServliDir" Name="servli" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="JavbedMenu" Name="JAVBED" />
+    </StandardDirectory>
+
+    <Feature Id="Complete" Title="JAVBED Launcher and engines" Level="1">
+      <ComponentRef Id="LauncherExe" />
+      <ComponentRef Id="PathEntries" />
+      <ComponentRef Id="StartMenu" />
+      <Files Directory="INSTALLFOLDER" Include="$(var.Payload)\JAVBED\**">
+        <Exclude Files="$(var.Payload)\JAVBED\JAVBED.exe" />
+      </Files>
+      <Files Directory="INSTALLFOLDER" Include="$(var.Payload)\engine-versions.json" />
+      <Files Directory="JavliDir" Include="$(var.Payload)\engines\javli\**" />
+      <Files Directory="BedliDir" Include="$(var.Payload)\engines\bedli\**" />
+      <Files Directory="EduliDir" Include="$(var.Payload)\engines\eduli\**" />
+      <Files Directory="LegliDir" Include="$(var.Payload)\engines\legli\**" />
+      <Files Directory="ServliDir" Include="$(var.Payload)\engines\servli\**" />
+    </Feature>
+
+    <Component Id="LauncherExe" Directory="INSTALLFOLDER" Guid="*">
+      <File Id="JAVBED_EXE" Source="$(var.Payload)\JAVBED\JAVBED.exe" KeyPath="yes" />
+    </Component>
+    <Component Id="PathEntries" Directory="INSTALLFOLDER" Guid="*">
+      <Environment Id="LauncherPath" Name="PATH" Action="set" Part="first" System="yes" Value="[INSTALLFOLDER]" />
+      <Environment Id="JavliPath" Name="PATH" Action="set" Part="first" System="yes" Value="[JavliDir]" />
+      <Environment Id="BedliPath" Name="PATH" Action="set" Part="first" System="yes" Value="[BedliDir]" />
+      <Environment Id="EduliPath" Name="PATH" Action="set" Part="first" System="yes" Value="[EduliDir]" />
+      <Environment Id="LegliPath" Name="PATH" Action="set" Part="first" System="yes" Value="[LegliDir]" />
+      <Environment Id="ServliPath" Name="PATH" Action="set" Part="first" System="yes" Value="[ServliDir]" />
+      <RegistryValue Root="HKLM" Key="Software\JAVBED\Launcher" Name="PathInstalled" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+    <Component Id="StartMenu" Directory="JavbedMenu" Guid="*">
+      <Shortcut Id="JavbedShortcut" Name="JAVBED Launcher" Target="[INSTALLFOLDER]JAVBED.exe" WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveJavbedMenu" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\JAVBED\Launcher" Name="StartMenuInstalled" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Package>
+</Wix>

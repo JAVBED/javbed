@@ -132,6 +132,22 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/JAVBED/* -DestinationPath "${{ matrix.artifact }}.zip"
 
+      - name: Stage verified Windows engine releases
+        if: runner.os == 'Windows'
+        run: python tools/installer_payload.py --app-dir dist/JAVBED --output msi-payload
+
+      - name: Build Windows MSI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          dotnet tool install --tool-path .\.wix wix --version 5.0.2
+          $version = $env:RELEASE_TAG.TrimStart('v')
+          $payload = (Resolve-Path .\msi-payload).Path
+          .\.wix\wix.exe build -arch x64 -d "Version=$version" -d "Payload=$payload" -o installer.msi .\installer\JAVBED.wxs
+          if (!(Test-Path .\installer.msi)) { throw "installer.msi was not produced." }
+
       - name: Package Linux/macOS
         if: runner.os != 'Windows'
         shell: bash
@@ -143,6 +159,7 @@ jobs:
           path: |
             ${{ matrix.artifact }}.zip
             ${{ matrix.artifact }}.tar.gz
+            installer.msi
           if-no-files-found: error
 
   release:

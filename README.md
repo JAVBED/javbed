@@ -55,4 +55,4 @@ To use portable mode, create an empty `portable.txt` beside the packaged JAVBED 
 
 ## Releases
 
-Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.
+Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. The Windows release includes `installer.msi`, which bundles the JAVBED build, Store helper, and the latest verified Windows x64 releases of JAVLI, BEDLI, EDULI, LEGLI, and SERVLI. It installs JAVBED in Program Files, adds the launcher and engine directories to the system PATH, and creates a JAVBED Launcher Start Menu shortcut. Pushes to `main` and pull requests run the test workflow; they do not publish releases.
