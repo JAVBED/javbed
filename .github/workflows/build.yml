@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version tag (leave blank to auto-increment patch, e.g. v0.1.3 -> v0.1.4)"
+        description: "Leave blank for next patch; or enter 1.2, 1.2.3, or v1.2.3"
         required: false
         type: string
 
@@ -23,35 +23,9 @@ jobs:
 
       - name: Choose release tag
         id: version
-        shell: bash
         env:
           REQUESTED: ${{ inputs.version }}
-        run: |
-          if [ -n "$REQUESTED" ]; then
-            TAG="$REQUESTED"
-            [[ "$TAG" == v* ]] || TAG="v$TAG"
-          else
-            git fetch --tags --force
-            LAST="$(git tag -l 'v*' --sort=-v:refname | head -n1)"
-            if [ -z "$LAST" ]; then
-              TAG="v0.1.0"
-            elif [[ "$LAST" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              TAG="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
-            else
-              echo "Latest v* tag '$LAST' is not semver. Enter a version manually."
-              exit 1
-            fi
-          fi
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must be vMAJOR.MINOR.PATCH."
-            exit 1
-          fi
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists."
-            exit 1
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Release tag: $TAG"
+        run: python tools/release_tag.py
 
       - name: Create and push tag
         env:
