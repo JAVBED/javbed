@@ -43,7 +43,7 @@ DEFAULTS = {
     "accent_color": "#3c8527",
     "compact_navigation": False,
     "show_artwork": True,
-    "startup_page": "Home",
+    "startup_page": "Java",
     "show_onboarding": True,
     "onboarding_complete": False,
 }
