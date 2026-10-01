@@ -92,7 +92,7 @@ def snapshot() -> list[dict]:
     for item in list_instances():
         name = str(item["name"])
         path = Path(str(item.get("path") or JAVLI_ROOT / "instances" / name))
-        mods = path / "mods"
+        mods = path / "minecraft" / "mods"
         count = sum(1 for file in mods.iterdir() if file.suffix.lower() == ".jar") if mods.is_dir() else 0
         rows.append({**item, "mod_count": count, "history": played.get(name, {}), "preferences": preferences(name)})
     return sorted(rows, key=lambda item: item["name"].lower())

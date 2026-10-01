@@ -11,6 +11,8 @@ from .instances import get_instance, launch_environment, managed_runtime_path, p
 from .jobs import Job
 from .home import HomePage
 from .instance_library import InstanceLibrary
+from .content_browser import ContentBrowser
+from .modpack_browser import ModpackBrowser
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
@@ -371,6 +373,8 @@ class GamePage(QWidget):
             self.build_modpacks()
             self.build_instances()
             self.build_accounts()
+            self.build_resources()
+            self.build_shaders()
         if self.label == "Servers":
             self.build_server_console()
         foot = QHBoxLayout()
@@ -390,7 +394,7 @@ class GamePage(QWidget):
         frame.setObjectName("topbar")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(18, 5, 18, 5)
-        tabs = (("Play","play"),("Instances","instances"),("Mods","mods"),("Modpacks","modpacks"),("Accounts","accounts")) if self.label=="Java" else ((("Servers","play"),("Console","console")) if self.label=="Servers" else (("Play","play"),))
+        tabs = (("Play","play"),("Instances","instances"),("Mods","mods"),("Modpacks","modpacks"),("Resource Packs","resources"),("Shaders","shaders"),("Accounts","accounts")) if self.label=="Java" else ((("Servers","play"),("Console","console")) if self.label=="Servers" else (("Play","play"),))
         self.tab_buttons = {}
         for title, key in tabs:
             button = QPushButton(title)
@@ -415,10 +419,18 @@ class GamePage(QWidget):
         self.hero.setVisible(key == "play")
         self.playbar.setVisible(key == "play")
         self.mods_panel.setVisible(key == "mods")
+        if key == "mods":
+            self.mods_panel.refresh_instances()
         self.instances_panel.setVisible(key == "instances")
         if key == "instances":
             self.instances_panel.refresh()
         self.modpacks_panel.setVisible(key == "modpacks")
+        self.resources_panel.setVisible(key == "resources")
+        self.shaders_panel.setVisible(key == "shaders")
+        if key == "resources":
+            self.resources_panel.refresh_instances()
+        if key == "shaders":
+            self.shaders_panel.refresh_instances()
         self.accounts_panel.setVisible(key == "accounts")
         for name, button in self.tab_buttons.items():
             button.setChecked(name == key)
@@ -519,28 +531,27 @@ class GamePage(QWidget):
         self.run(["account", "remove", alias], target=self.account_output)
 
     def build_modpacks(self):
-        self.modpacks_panel=QFrame();self.modpacks_panel.setObjectName("hero");self.modpacks_panel.hide();box=QVBoxLayout(self.modpacks_panel);box.setContentsMargins(35,25,35,25)
-        title=QLabel("MODRINTH MODPACKS");title.setObjectName("heroTitle");box.addWidget(title)
-        row=QHBoxLayout();self.pack_query=QLineEdit();self.pack_query.setPlaceholderText("Search modpacks");self.pack_slug=QLineEdit();self.pack_slug.setPlaceholderText("Modpack slug");self.pack_instance=QLineEdit();self.pack_instance.setPlaceholderText("New instance name");row.addWidget(self.pack_query);row.addWidget(self.button("SEARCH",self.search_modpacks));row.addWidget(self.pack_slug);row.addWidget(self.pack_instance);row.addWidget(self.button("INSTALL",self.install_modpack,True));box.addLayout(row)
-        self.pack_output=QPlainTextEdit();self.pack_output.setReadOnly(True);box.addWidget(self.pack_output);self.root.insertWidget(2,self.modpacks_panel,1)
-    def search_modpacks(self):
-        q=self.pack_query.text().strip()
-        if q:self.run(["modpack","search",q],target=self.pack_output)
-    def install_modpack(self):
-        slug=self.pack_slug.text().strip();name=self.pack_instance.text().strip()
-        if not slug:self.status.setText("Enter a modpack slug.");return
-        args=["modpack","install",slug]
-        if name:args+=["--instance",name]
-        self.run(args,target=self.pack_output)
+        self.modpacks_panel = ModpackBrowser(
+            lambda args, callback: self.run(args, target=self.output, finished=callback), self
+        )
+        self.modpacks_panel.hide()
+        self.root.insertWidget(2, self.modpacks_panel, 1)
 
     def build_mods(self):
-        self.mods_panel=QFrame();self.mods_panel.setObjectName("hero");self.mods_panel.hide();box=QVBoxLayout(self.mods_panel);box.setContentsMargins(35,25,35,25)
-        title=QLabel("JAVA MODS");title.setObjectName("heroTitle");box.addWidget(title)
-        row=QHBoxLayout();self.mod_provider=self.combo(["modrinth","curseforge"],False);self.mod_query=QLineEdit();self.mod_query.setPlaceholderText("Search mods");self.mod_version=QLineEdit();self.mod_version.setPlaceholderText("Minecraft version");self.mod_loader=self.combo(["fabric","quilt","forge","neoforge"],False)
-        for w in (self.mod_provider,self.mod_query,self.mod_version,self.mod_loader):row.addWidget(w)
-        row.addWidget(self.button("SEARCH",self.search_mods));box.addLayout(row)
-        row2=QHBoxLayout();self.mod_instance=QLineEdit();self.mod_instance.setPlaceholderText("Instance name");self.mod_project=QLineEdit();self.mod_project.setPlaceholderText("Project slug / ID");row2.addWidget(self.mod_instance);row2.addWidget(self.mod_project);row2.addWidget(self.button("INSTALL",self.install_mod,True));row2.addWidget(self.button("LIST INSTALLED",self.list_mods));box.addLayout(row2)
-        self.mod_output=QPlainTextEdit();self.mod_output.setReadOnly(True);box.addWidget(self.mod_output);self.root.insertWidget(2,self.mods_panel,1)
+        self.mods_panel = ContentBrowser("mod", lambda args, callback: self.run(args, target=self.output, finished=callback), self)
+        self.mods_panel.hide()
+        self.root.insertWidget(2, self.mods_panel, 1)
+
+    def build_resources(self):
+        self.resources_panel = ContentBrowser("resourcepack", lambda args, callback: self.run(args, target=self.output, finished=callback), self)
+        self.resources_panel.hide()
+        self.root.insertWidget(2, self.resources_panel, 1)
+
+    def build_shaders(self):
+        self.shaders_panel = ContentBrowser("shader", lambda args, callback: self.run(args, target=self.output, finished=callback), self)
+        self.shaders_panel.hide()
+        self.root.insertWidget(2, self.shaders_panel, 1)
+
     def build_instances(self):
         self.instance_output = QPlainTextEdit()
         self.instance_output.setReadOnly(True)
@@ -550,22 +561,6 @@ class GamePage(QWidget):
         self.instances_panel.hide()
         self.root.insertWidget(2, self.instances_panel, 1)
 
-    def search_mods(self):
-        args=["mods","search",self.mod_query.text().strip()]
-        if self.mod_version.text().strip():args+=["--minecraft",self.mod_version.text().strip()]
-        if self.mod_loader.currentText():args+=["--loader",self.mod_loader.currentText()]
-        if self.mod_provider.currentText()=="curseforge":args+=["--provider","curseforge"]
-        self.run(args,target=self.mod_output)
-    def install_mod(self):
-        project=self.mod_project.text().strip();instance=self.mod_instance.text().strip()
-        if not project or not instance:self.status.setText("Enter an instance and project slug / ID.");return
-        args=["mods","install",project,"--instance",instance,"--loader",self.mod_loader.currentText()]
-        if self.mod_provider.currentText()=="curseforge":args+=["--provider","curseforge"]
-        self.run(args,target=self.mod_output)
-    def list_mods(self):
-        instance=self.mod_instance.text().strip()
-        if not instance:self.status.setText("Enter an instance name.");return
-        self.run(["mods","list","--instance",instance],target=self.mod_output)
     def combo(self,items=(),editable=True):c=QComboBox();c.setEditable(editable);c.addItems(items);return c
     def button(self,text,fn,play=False):b=QPushButton(text);b.setObjectName("play" if play else "secondary");b.clicked.connect(fn);return b
     def build_controls(self):

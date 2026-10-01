@@ -31,6 +31,8 @@ The Home dashboard shows the active JAVLI account, recent play sessions, quick l
 
 The Java **Instances** tab lists JAVLI instances as cards with version, loader, mod count, play history, and launch controls. Create and import instances there; each card offers editing, cloning, folder access, icon changes, and confirmed deletion. Memory and window preferences are saved per instance in JAVBED and passed to current JAVLI versions at launch. JAVLI chooses and installs the appropriate Java runtime automatically, or JAVBED can request Java 8, 17, 21, or 25 for an instance.
 
+The Java **Mods**, **Modpacks**, **Resource Packs**, and **Shaders** tabs browse compatible projects with graphical cards. Mods and modpacks support Modrinth and CurseForge search; CurseForge needs an API key in Settings. Install actions check the exact Minecraft version and loader before asking JAVLI to install. The Installed view can enable, disable, update, and remove tracked mods; updates keep a safety copy until the replacement succeeds. Modpacks create isolated JAVLI instances, and the Modpacks tab can open a local `.mrpack`. Current JAVLI source is required for local pack import and explicit pack-version selection. Shader installation explains when a shader loader is missing and can install compatible Iris through JAVLI for supported loaders.
+
 ## Releases
 
 Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.

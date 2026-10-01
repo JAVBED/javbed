@@ -38,7 +38,7 @@ class HistoryAccountTests(unittest.TestCase):
             root = Path(directory)
             javli = root / "javli"
             game = javli / "instances" / "survival"
-            mods = game / "mods"
+            mods = game / "minecraft" / "mods"
             mods.mkdir(parents=True)
             (mods / "example.jar").touch()
             javli.mkdir(exist_ok=True)
