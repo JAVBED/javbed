@@ -47,6 +47,8 @@ On first run, JAVBED scans for editions, engines, runtimes, Java instances, and 
 
 Press **Ctrl+K** to search launcher actions, games, instances, servers, and mods. Windows packaged builds register the per-user `javbed://` protocol on first launch; links for Java versions, instances, servers, Modrinth searches, and Settings open the corresponding launcher view. Settings supports an accent color, compact navigation, artwork preference, startup page, server backup defaults, and launch behavior. Completion and crash notices appear quietly in the status bar.
 
+Java settings can set an absolute Minecraft game directory for direct version launches, a default fullscreen launch preference, and an explicit Java executable. Instance game directories remain isolated. The optional startup update check reports new JAVBED releases without installing them automatically.
+
 To use portable mode, create an empty `portable.txt` beside the packaged JAVBED executable before starting it. JAVBED settings, cache, managed engines, and launcher state then use `JAVBED-data` beside the executable. Existing data is left where it is; portable mode does not migrate it automatically. In a source checkout, place `portable.txt` next to `javbed_main.py`.
 
 ## Releases

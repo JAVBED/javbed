@@ -1067,6 +1067,9 @@ class SettingsPage(QWidget):
         if not re.fullmatch(r"#[0-9a-fA-F]{6}",self.accent.text().strip()):
             self.status.setText("Accent color must be a six-digit hex color, such as #3c8527.")
             return
+        if self.minecraft_dir.text().strip() and not Path(self.minecraft_dir.text().strip()).is_absolute():
+            self.status.setText("Minecraft directory must be an absolute path.")
+            return
         self.data=load_settings()
         self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"minimize_on_launch":self.minimize_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip(),"bedrock_worlds_path":self.bedrock_worlds.text().strip(),"edu_worlds_path":self.edu_worlds.text().strip(),"servli_home":self.servli_home.text().strip(),"server_backup_mode":self.backup_mode.currentText(),"server_backup_keep":self.backup_keep.value()})
         for key, field in self.engine_fields.items(): self.data[key]=field.text().strip()
@@ -1140,6 +1143,11 @@ class MainWindow(QMainWindow):
         self.select(entries.index(startup) if startup in entries else 0)
         QTimer.singleShot(300,self.refresh_all);QTimer.singleShot(500,self.recover_safe_modes)
         QTimer.singleShot(1200,self.maybe_onboard)
+        QTimer.singleShot(5000,self.auto_check_updates)
+    def auto_check_updates(self):
+        if load_settings().get("check_updates",True):
+            page=next((item for item in self.pages if isinstance(item,UpdatesPage)),None)
+            if page:page.check_self()
     def maybe_onboard(self):
         current=load_settings()
         if not self.isVisible() or not current.get("show_onboarding",True) or current.get("onboarding_complete"):

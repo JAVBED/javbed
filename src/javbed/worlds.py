@@ -34,6 +34,9 @@ class World:
 
 
 def java_root() -> Path:
+    configured = str(settings.load().get("minecraft_directory") or "").strip()
+    if configured and Path(configured).is_absolute():
+        return Path(configured) / "saves"
     if sys.platform == "win32":
         return Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming") / ".minecraft" / "saves"
     if sys.platform == "darwin":

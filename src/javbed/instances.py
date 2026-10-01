@@ -106,6 +106,11 @@ def launch_environment(name: str = "") -> dict[str, str]:
         "MCLI_RESOLUTION_WIDTH": str(pref.get("width", data.get("resolution_width", 1280))),
         "MCLI_RESOLUTION_HEIGHT": str(pref.get("height", data.get("resolution_height", 720))),
     }
+    if data.get("fullscreen"):
+        result["MCLI_FULLSCREEN"] = "1"
+    folder = str(data.get("minecraft_directory") or "").strip()
+    if not name and folder and Path(folder).is_absolute():
+        result["MCLI_GAME_DIR"] = folder
     major = pref.get("java_major")
     runtime = str(managed_runtime_path(int(major)) if major else pref.get("java_runtime") or data.get("java_runtime") or "")
     if runtime and Path(runtime).is_file():

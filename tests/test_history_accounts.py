@@ -11,6 +11,15 @@ from javbed import accounts, history, instances, settings
 
 
 class HistoryAccountTests(unittest.TestCase):
+    def test_default_java_path_and_fullscreen_reach_javli(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(settings, "FILE", Path(directory) / "settings.json"):
+            data = settings.load()
+            data.update({"minecraft_directory": str(Path(directory).resolve()), "fullscreen": True})
+            settings.save(data)
+            environment = instances.launch_environment()
+            self.assertEqual(environment["MCLI_GAME_DIR"], str(Path(directory).resolve()))
+            self.assertEqual(environment["MCLI_FULLSCREEN"], "1")
+
     def test_history_ignores_failed_starts_and_summarizes_sessions(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(settings, "ROOT", Path(directory)):
             started = datetime(2026, 1, 1, tzinfo=timezone.utc)
