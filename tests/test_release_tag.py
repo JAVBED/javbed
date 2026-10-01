@@ -13,6 +13,7 @@ class ReleaseTagTests(unittest.TestCase):
     def test_normalizes_manual_versions_and_rejects_duplicates(self):
         tags = {"v1.1", "v1.2.3"}
         self.assertEqual(choose_tag(" 1.2 ", tags), "v1.2.0")
+        self.assertEqual(choose_tag("v2", tags), "v2.0.0")
         self.assertEqual(choose_tag("v2.0.1", tags), "v2.0.1")
         with self.assertRaisesRegex(ValueError, "already exists"):
             choose_tag("v1.1", tags)
