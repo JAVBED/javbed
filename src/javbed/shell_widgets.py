@@ -1,4 +1,4 @@
-"""Small widgets shared by the launcher shell and Java Play screen."""
+"""Small widgets and native-size game icons for the launcher shell."""
 
 from __future__ import annotations
 
@@ -6,27 +6,87 @@ from PySide6.QtCore import QPoint, Qt, QSize, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygon
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from .artwork import cached_art
-
-
 def game_icon(label: str, size: int = 28) -> QIcon:
     if label in ("Java", "Bedrock"):
-        image = QPixmap(28,28)
+        image = QPixmap(28, 28)
         image.fill(Qt.GlobalColor.transparent)
         painter = QPainter(image)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#74c341"))
+        grass = label == "Java"
+        painter.setBrush(QColor("#74c341" if grass else "#8b9296"))
         painter.drawPolygon(QPolygon([QPoint(14,2),QPoint(26,8),QPoint(14,14),QPoint(2,8)]))
-        painter.setBrush(QColor("#76593a"))
+        painter.setBrush(QColor("#76593a" if grass else "#474c51"))
         painter.drawPolygon(QPolygon([QPoint(2,8),QPoint(14,14),QPoint(14,27),QPoint(2,21)]))
-        painter.setBrush(QColor("#9b7449"))
+        painter.setBrush(QColor("#9b7449" if grass else "#646b70"))
         painter.drawPolygon(QPolygon([QPoint(14,14),QPoint(26,8),QPoint(26,21),QPoint(14,27)]))
-        painter.fillRect(5,14,3,2,QColor("#5d492f"))
-        painter.fillRect(18,18,3,2,QColor("#5d492f"))
-        painter.fillRect(20,10,3,2,QColor("#4d9c30"))
+        painter.fillRect(5,14,3,2,QColor("#5d492f" if grass else "#30363a"))
+        painter.fillRect(18,18,3,2,QColor("#5d492f" if grass else "#353b40"))
+        painter.fillRect(20,10,3,2,QColor("#4d9c30" if grass else "#c2c7c8"))
         painter.end()
         return QIcon(image.scaled(size,size,Qt.AspectRatioMode.IgnoreAspectRatio,
                                   Qt.TransformationMode.FastTransformation))
+    if label in ("EDU", "LCE", "Dungeons", "Dungeons 2", "Legends", "Story Mode", "Story Mode 2"):
+        image = QPixmap(28, 28)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        painter.setPen(Qt.PenStyle.NoPen)
+        backgrounds = {
+            "EDU": "#426d9d", "LCE": "#765b3d", "Dungeons": "#874b36",
+            "Dungeons 2": "#4f457a", "Legends": "#397e80",
+            "Story Mode": "#7b5436", "Story Mode 2": "#7b5436",
+        }
+        painter.setBrush(QColor(backgrounds[label]))
+        painter.drawRect(1, 1, 26, 26)
+        painter.setBrush(QColor("#ffffff"))
+        if label == "EDU":
+            # Open lesson book with a bright central spine.
+            painter.setBrush(QColor("#d6ebef"))
+            painter.drawPolygon(QPolygon([QPoint(4,6),QPoint(12,8),QPoint(13,22),QPoint(4,20)]))
+            painter.drawPolygon(QPolygon([QPoint(24,6),QPoint(16,8),QPoint(15,22),QPoint(24,20)]))
+            painter.fillRect(13,7,2,16,QColor("#f7ce70"))
+            painter.fillRect(7,11,4,1,QColor("#7babbc"))
+            painter.fillRect(17,11,4,1,QColor("#7babbc"))
+        elif label == "LCE":
+            # Console gamepad, broad enough to read at native sidebar size.
+            painter.setBrush(QColor("#e6d3a8"))
+            painter.drawPolygon(QPolygon([QPoint(4,11),QPoint(8,8),QPoint(20,8),QPoint(24,11),QPoint(26,20),QPoint(22,22),QPoint(18,18),QPoint(10,18),QPoint(6,22),QPoint(2,20)]))
+            painter.fillRect(8,11,2,6,QColor("#55462e"))
+            painter.fillRect(6,13,6,2,QColor("#55462e"))
+            painter.fillRect(19,12,2,2,QColor("#4b9e60"))
+            painter.fillRect(22,15,2,2,QColor("#b65c43"))
+        elif label in ("Dungeons", "Dungeons 2"):
+            # One dungeon blade for the first game, crossed blades for the second.
+            painter.setPen(QPen(QColor("#f1d5a7"),3))
+            painter.drawLine(7,6,19,20)
+            painter.setPen(QPen(QColor("#2b292a"),3))
+            painter.drawLine(17,18,22,23)
+            painter.setPen(QPen(QColor("#f6bf63"),2))
+            painter.drawLine(15,21,20,17)
+            if label == "Dungeons 2":
+                painter.setPen(QPen(QColor("#c4dcf2"),3))
+                painter.drawLine(21,6,9,20)
+                painter.setPen(QPen(QColor("#2b292a"),3))
+                painter.drawLine(11,18,6,23)
+        elif label == "Legends":
+            # Banner and staff echo the game's rally motif.
+            painter.fillRect(7,4,2,21,QColor("#f3d686"))
+            painter.setBrush(QColor("#efcf78"))
+            painter.drawPolygon(QPolygon([QPoint(9,5),QPoint(23,5),QPoint(21,10),QPoint(23,16),QPoint(9,16)]))
+            painter.fillRect(14,8,4,5,QColor("#397e80"))
+            painter.fillRect(5,24,8,2,QColor("#d6b86f"))
+        else:
+            # Story Mode's book and clasp.
+            painter.fillRect(5,5,18,19,QColor("#e6c48b"))
+            painter.fillRect(5,5,4,19,QColor("#986039"))
+            painter.fillRect(10,8,10,3,QColor("#a26640"))
+            painter.fillRect(10,14,10,2,QColor("#a26640"))
+            painter.fillRect(17,19,6,3,QColor("#e8a94d"))
+        painter.end()
+        return QIcon(image.scaled(size, size, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                  Qt.TransformationMode.FastTransformation))
+    if label == "Home":
+        return game_icon("Java", size)
     if label in ("Updates", "Settings", "Servers", "Worlds"):
         image = QPixmap(size, size)
         image.fill(Qt.GlobalColor.transparent)
@@ -50,17 +110,7 @@ def game_icon(label: str, size: int = 28) -> QIcon:
             painter.drawRect(2,4,size-5,20)
         painter.end()
         return QIcon(image)
-    path = cached_art(label if label not in ("Home", "Worlds", "Servers") else "Java")
-    if not path:
-        return QIcon()
-    image = QPixmap(str(path))
-    if image.isNull():
-        return QIcon()
-    scaled = image.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                          Qt.TransformationMode.SmoothTransformation)
-    left = max(0, (scaled.width() - size) // 2)
-    top = max(0, (scaled.height() - size) // 2)
-    return QIcon(scaled.copy(left, top, size, size))
+    return QIcon()
 
 
 class AccountHeader(QFrame):

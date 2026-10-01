@@ -12,6 +12,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QPushButton
 from javbed.app import ExtraPage, MainWindow, SettingsPage, UpdatesPage
 from javbed.instance_library import InstanceWizard
+from javbed.shell_widgets import game_icon
 from javbed import settings
 
 
@@ -34,6 +35,12 @@ class UiTests(unittest.TestCase):
             self.wait_for(lambda: page.scan_job is None)
             self.assertIn("Not detected", page.state.text())
             self.assertTrue(page.locate_button.isEnabled())
+
+    def test_game_menu_icons_are_present_and_distinct(self):
+        names = ("Java", "Bedrock", "EDU", "LCE", "Dungeons", "Dungeons 2", "Legends", "Story Mode")
+        images = [game_icon(name).pixmap(28, 28) for name in names]
+        self.assertTrue(all(not image.isNull() for image in images))
+        self.assertEqual(len({image.toImage().cacheKey() for image in images}), len(names))
 
     def test_engine_updates_leave_event_loop_responsive(self):
         page = UpdatesPage()
