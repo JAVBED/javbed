@@ -33,6 +33,23 @@ class HistoryAccountTests(unittest.TestCase):
             self.assertEqual(instances.get_instance("survival")["loader"], "fabric")
             self.assertIsNone(instances.get_instance("missing"))
 
+    def test_instance_preferences_and_mod_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            javli = root / "javli"
+            game = javli / "instances" / "survival"
+            mods = game / "mods"
+            mods.mkdir(parents=True)
+            (mods / "example.jar").touch()
+            javli.mkdir(exist_ok=True)
+            (javli / "instances.json").write_text(json.dumps({"survival": {"name": "survival", "era": "release", "version": "1.21.1", "path": str(game)}}), encoding="utf-8")
+            with patch.object(settings, "ROOT", root / "JAVBED"), patch.object(settings, "FILE", root / "JAVBED" / "settings.json"), patch.object(instances, "JAVLI_ROOT", javli):
+                instances.save_preferences("survival", {"memory_mb": 8192, "width": 1600, "height": 900, "java_major": 21})
+                self.assertEqual(instances.snapshot()[0]["mod_count"], 1)
+                self.assertEqual(instances.launch_environment("survival")["MCLI_MEMORY_MB"], "8192")
+                self.assertEqual(instances.preferences("survival")["java_major"], 21)
+                self.assertFalse(instances.valid_name("../unsafe"))
+
 
 if __name__ == "__main__":
     unittest.main()

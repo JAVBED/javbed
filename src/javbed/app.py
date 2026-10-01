@@ -1,15 +1,16 @@
 from __future__ import annotations
 import os, re, shutil, subprocess, sys, threading
 from pathlib import Path
-from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QRunnable, QThreadPool, QTimer, Signal, Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
 from .engines import ENGINES
 from . import history
 from .accounts import active_account, avatar_path
-from .instances import get_instance
+from .instances import get_instance, launch_environment, managed_runtime_path, preferences as instance_preferences
 from .jobs import Job
 from .home import HomePage
+from .instance_library import InstanceLibrary
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
@@ -415,6 +416,8 @@ class GamePage(QWidget):
         self.playbar.setVisible(key == "play")
         self.mods_panel.setVisible(key == "mods")
         self.instances_panel.setVisible(key == "instances")
+        if key == "instances":
+            self.instances_panel.refresh()
         self.modpacks_panel.setVisible(key == "modpacks")
         self.accounts_panel.setVisible(key == "accounts")
         for name, button in self.tab_buttons.items():
@@ -539,61 +542,13 @@ class GamePage(QWidget):
         row2=QHBoxLayout();self.mod_instance=QLineEdit();self.mod_instance.setPlaceholderText("Instance name");self.mod_project=QLineEdit();self.mod_project.setPlaceholderText("Project slug / ID");row2.addWidget(self.mod_instance);row2.addWidget(self.mod_project);row2.addWidget(self.button("INSTALL",self.install_mod,True));row2.addWidget(self.button("LIST INSTALLED",self.list_mods));box.addLayout(row2)
         self.mod_output=QPlainTextEdit();self.mod_output.setReadOnly(True);box.addWidget(self.mod_output);self.root.insertWidget(2,self.mods_panel,1)
     def build_instances(self):
-        self.instances_panel = QFrame()
-        self.instances_panel.setObjectName("hero")
-        self.instances_panel.hide()
-        box = QVBoxLayout(self.instances_panel)
-        box.setContentsMargins(35, 25, 35, 25)
-        title = QLabel("JAVA INSTANCES")
-        title.setObjectName("heroTitle")
-        box.addWidget(title)
-        row = QHBoxLayout()
-        self.instance_name = QLineEdit(); self.instance_name.setPlaceholderText("Instance name")
-        self.instance_era = self.combo(["release","snapshot","beta","alpha","infdev","indev","classic","preclassic"], False)
-        self.instance_version = QLineEdit(); self.instance_version.setPlaceholderText("Minecraft version")
-        self.instance_loader = self.combo(["none","fabric","quilt","forge","neoforge"], False)
-        for widget in (self.instance_name, self.instance_era, self.instance_version, self.instance_loader): row.addWidget(widget)
-        row.addWidget(self.button("CREATE", self.create_instance, True))
-        box.addLayout(row)
-        row2 = QHBoxLayout()
-        self.clone_name = QLineEdit(); self.clone_name.setPlaceholderText("Clone as...")
-        self.import_path = QLineEdit(); self.import_path.setPlaceholderText("Path to existing instance")
-        row2.addWidget(self.button("LIST", self.list_instances))
-        row2.addWidget(self.button("LAUNCH", self.launch_instance, True))
-        row2.addWidget(self.clone_name)
-        row2.addWidget(self.button("CLONE", self.clone_instance))
-        row2.addWidget(self.import_path)
-        row2.addWidget(self.button("IMPORT", self.import_instance))
-        box.addLayout(row2)
         self.instance_output = QPlainTextEdit()
         self.instance_output.setReadOnly(True)
-        box.addWidget(self.instance_output)
+        self.instances_panel = InstanceLibrary(
+            lambda args, callback: self.run(args, target=self.instance_output, finished=callback), self
+        )
+        self.instances_panel.hide()
         self.root.insertWidget(2, self.instances_panel, 1)
-
-    def create_instance(self):
-        name = self.instance_name.text().strip(); version = self.instance_version.text().strip()
-        if not name or not version: self.status.setText("Enter an instance name and Minecraft version."); return
-        args = ["instance","create",name,self.instance_era.currentText(),version]
-        if self.instance_loader.currentText() != "none": args += ["--loader",self.instance_loader.currentText()]
-        self.run(args,target=self.instance_output)
-
-    def list_instances(self):
-        self.run(["instance","list"],target=self.instance_output)
-
-    def launch_instance(self):
-        name = self.instance_name.text().strip()
-        if not name: self.status.setText("Enter an instance name."); return
-        self.run(["instance","launch",name],target=self.instance_output)
-
-    def clone_instance(self):
-        source = self.instance_name.text().strip(); dest = self.clone_name.text().strip()
-        if not source or not dest: self.status.setText("Enter the source instance and clone name."); return
-        self.run(["instance","clone",source,dest],target=self.instance_output)
-
-    def import_instance(self):
-        path = self.import_path.text().strip()
-        if not path: self.status.setText("Enter an instance path."); return
-        self.run(["instance","import",path],target=self.instance_output)
 
     def search_mods(self):
         args=["mods","search",self.mod_query.text().strip()]
@@ -705,12 +660,35 @@ class GamePage(QWidget):
         n=self.server.text().strip()
         if not n:self.status.setText("Enter a server name.");return
         self.run([a,n],target=self.server_console_output if hasattr(self,"server_console_output") else self.output)
-    def run(self,args,capture=None,quiet=False,target=None):
+    def run(self,args,capture=None,quiet=False,target=None,finished=None):
         cmd,error=self.engine.command(*[x for x in args if x])
-        if error:self.status.setText(error);return
-        if self.proc and self.proc.state()!=QProcess.ProcessState.NotRunning:return
+        if error:
+            self.status.setText(error)
+            if finished:finished(False,error)
+            return
+        if self.proc and self.proc.state()!=QProcess.ProcessState.NotRunning:
+            if finished:finished(False,"Another JAVLI command is still running.")
+            return
+        if self.label == "Java" and len(args) > 2 and args[:2] == ["instance", "launch"]:
+            major = instance_preferences(args[2]).get("java_major")
+            if major and not managed_runtime_path(int(major)).is_file():
+                self.status.setText(f"Installing Java {major} for {args[2]}...")
+
+                def installed(ok, output):
+                    if ok and managed_runtime_path(int(major)).is_file():
+                        self.run(args, capture=capture, quiet=quiet, target=target, finished=finished)
+                    elif finished:
+                        finished(False, output or f"Java {major} installation failed.")
+
+                self.run(["java", "install", str(major)], target=target, finished=installed)
+                return
         if not quiet:(target or self.output).clear()
         proc=QProcess(self);self.proc=proc;proc.setProgram(cmd[0]);proc.setArguments(cmd[1:]);proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels);chunks=[]
+        if self.label == "Java" and args and (args[0] == "instance" and len(args) > 2 and args[1] == "launch" or args[0] in ("release", "snapshot", "beta", "alpha", "infdev", "indev", "classic", "preclassic")):
+            environment = QProcessEnvironment.systemEnvironment()
+            for key, value in launch_environment(args[2] if args[0] == "instance" else "").items():
+                environment.insert(key, value)
+            proc.setProcessEnvironment(environment)
         def ready():
             try:t=bytes(proc.readAllStandardOutput()).decode(errors="replace")
             except RuntimeError:return
@@ -748,6 +726,8 @@ class GamePage(QWidget):
                     self.version.addItems(values)
                 else:
                     self.status.setText("No versions returned by " + self.provider.currentText())
+            if finished:
+                finished(code == 0, "".join(chunks))
         proc.readyReadStandardOutput.connect(ready);proc.finished.connect(done);proc.start()
 
 class UpdatesPage(QWidget):

@@ -29,6 +29,8 @@ Engine updates run in the background and verify the SHA-256 digest supplied with
 
 The Home dashboard shows the active JAVLI account, recent play sessions, quick launch targets, detected games, and SERVLI status. JAVBED reads only public profile fields from JAVLI's account data and uses JAVLI for sign-in and account switching. Game sessions lasting at least ten seconds are saved to JAVBED's `history.json` when the launched process can be observed. A skin avatar is fetched from Crafatar when the account has a Minecraft UUID.
 
+The Java **Instances** tab lists JAVLI instances as cards with version, loader, mod count, play history, and launch controls. Create and import instances there; each card offers editing, cloning, folder access, icon changes, and confirmed deletion. Memory and window preferences are saved per instance in JAVBED and passed to current JAVLI versions at launch. JAVLI chooses and installs the appropriate Java runtime automatically, or JAVBED can request Java 8, 17, 21, or 25 for an instance.
+
 ## Releases
 
 Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.
