@@ -1,9 +1,9 @@
 from __future__ import annotations
 import os, re, shutil, subprocess, sys, threading
 from pathlib import Path
-from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt, QSize
-from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import QObject, QProcess, QRunnable, QThreadPool, QTimer, Signal, Qt
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget
 from .engines import ENGINES
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
@@ -281,13 +281,13 @@ class StoryModePage(QWidget):
         super().__init__();self.paths=load_settings();self.pool=QThreadPool.globalInstance();self.download_job=None;self.iso_job=None;root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0);root.setSpacing(0)
         top=QFrame();top.setObjectName("topbar");tl=QHBoxLayout(top);tl.setContentsMargins(18,5,18,5);tl.addWidget(QLabel("Story Mode"));tl.addStretch();root.addWidget(top)
         self.hero=HeroArt("Story Mode");root.addWidget(self.hero,1)
-        bar=QFrame();bar.setObjectName("playbar");b=QVBoxLayout(bar);b.setContentsMargins(28,8,28,8)
-        primary=QHBoxLayout();self.season=QComboBox();self.season.addItems(["Season 1","Season 2"]);self.season.currentIndexChanged.connect(self.refresh);primary.addWidget(self.season)
-        self.state=QLabel();primary.addWidget(self.state);primary.addStretch()
-        self.play=QPushButton("PLAY");self.play.setObjectName("play");self.play.clicked.connect(self.launch);primary.addWidget(self.play);b.addLayout(primary)
-        actions=QHBoxLayout();locate=QPushButton("LOCATE INSTALLATION");locate.setObjectName("secondary");locate.clicked.connect(self.locate);actions.addWidget(locate)
-        self.download=QPushButton("DOWNLOAD ISO");self.download.setObjectName("secondary");self.download.clicked.connect(self.download_selected);actions.addWidget(self.download)
-        self.iso_button=QPushButton("INSTALL FROM ISO");self.iso_button.setObjectName("secondary");self.iso_button.clicked.connect(self.install_iso);actions.addWidget(self.iso_button);actions.addStretch();b.addLayout(actions);root.addWidget(bar)
+        bar=QFrame();bar.setObjectName("playbar");b=QHBoxLayout(bar);b.setContentsMargins(28,8,28,8)
+        self.season=QComboBox();self.season.addItems(["Season 1","Season 2"]);self.season.currentIndexChanged.connect(self.refresh);b.addWidget(self.season)
+        self.state=QLabel();b.addWidget(self.state);b.addStretch()
+        locate=QPushButton("LOCATE INSTALLATION");locate.setObjectName("secondary");locate.clicked.connect(self.locate);b.addWidget(locate)
+        self.download=QPushButton("DOWNLOAD ISO");self.download.setObjectName("secondary");self.download.clicked.connect(self.download_selected);b.addWidget(self.download)
+        self.iso_button=QPushButton("INSTALL FROM ISO");self.iso_button.setObjectName("secondary");self.iso_button.clicked.connect(self.install_iso);b.addWidget(self.iso_button)
+        self.play=QPushButton("PLAY");self.play.setObjectName("play");self.play.clicked.connect(self.launch);b.addWidget(self.play);root.addWidget(bar)
         progress_row=QHBoxLayout();self.progress=QProgressBar();self.progress.setRange(0,100);self.progress.hide();progress_row.addWidget(self.progress)
         self.cancel_download=QPushButton("PAUSE DOWNLOAD");self.cancel_download.setObjectName("secondary");self.cancel_download.hide();self.cancel_download.clicked.connect(self.pause_download);progress_row.addWidget(self.cancel_download)
         root.addLayout(progress_row);self.refresh()
@@ -814,20 +814,17 @@ class SettingsPage(QWidget):
 class HomePage(QWidget):
     def __init__(self, window):
         super().__init__(); self.window=window;self.pool=QThreadPool.globalInstance();self.refresh_job=None
-        root=QVBoxLayout(self);root.setContentsMargins(28,22,28,22);root.setSpacing(12)
+        root=QVBoxLayout(self);root.setContentsMargins(36,28,36,28);root.setSpacing(18)
         top=QHBoxLayout(); title=QLabel("HOME");title.setObjectName("heroTitle");top.addWidget(title);top.addStretch();self.refresh_button=QPushButton("REFRESH");self.refresh_button.setObjectName("secondary");self.refresh_button.clicked.connect(self.refresh);top.addWidget(self.refresh_button);root.addLayout(top)
         self.summary=QLabel("JAVBED launcher overview");self.summary.setObjectName("small");root.addWidget(self.summary)
-        self.banner=HeroArt("Java");self.banner.setMinimumHeight(180);self.banner.setMaximumHeight(260);root.addWidget(self.banner,1)
         cards=QHBoxLayout()
         self.games_card=self.card("GAMES");self.engines_card=self.card("ENGINES");self.servers_card=self.card("SERVERS");cards.addWidget(self.games_card[0]);cards.addWidget(self.engines_card[0]);cards.addWidget(self.servers_card[0]);root.addLayout(cards)
-        quick=QFrame();quick.setObjectName("hero");q=QVBoxLayout(quick);qt=QLabel("YOUR GAMES");qt.setObjectName("game");q.addWidget(qt);grid=QGridLayout()
-        for index,label in enumerate(("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode")):
+        quick=QFrame();quick.setObjectName("hero");q=QVBoxLayout(quick);qt=QLabel("QUICK LAUNCH");qt.setObjectName("game");q.addWidget(qt);row=QHBoxLayout()
+        for label in ("Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode"):
             b=QPushButton(label);b.setObjectName("secondary")
-            artwork=cached_art(label)
-            if artwork:b.setIcon(QIcon(str(artwork)));b.setIconSize(QSize(30,30))
-            b.clicked.connect(lambda checked=False,name=label:self.quick_launch(name));grid.addWidget(b,index//4,index%4)
-        q.addLayout(grid);root.addWidget(quick)
-        self.details=QPlainTextEdit();self.details.setReadOnly(True);self.details.setMaximumHeight(95);root.addWidget(self.details);QTimer.singleShot(500,self.refresh)
+            b.clicked.connect(lambda checked=False,name=label:self.quick_launch(name));row.addWidget(b)
+        q.addLayout(row);root.addWidget(quick)
+        self.details=QPlainTextEdit();self.details.setReadOnly(True);self.details.setMaximumHeight(190);root.addWidget(self.details);root.addStretch();QTimer.singleShot(500,self.refresh)
     def card(self,title):
         frame=QFrame();frame.setObjectName("hero");layout=QVBoxLayout(frame);head=QLabel(title);head.setObjectName("small");value=QLabel("…");value.setObjectName("game");layout.addWidget(head);layout.addWidget(value);return frame,value
     def quick_launch(self,name):
@@ -859,17 +856,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__();self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620)
         root=QWidget();layout=QHBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
-        rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(205);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
-        account=QFrame();account.setObjectName("account");a=QVBoxLayout(account);a.setContentsMargins(14,18,10,18);name=QLabel("JAVBED");name.setObjectName("logo");sub=QLabel("MINECRAFT COLLECTION");sub.setObjectName("small");a.addWidget(name);a.addWidget(sub);r.addWidget(account)
+        rail=QFrame();rail.setObjectName("rail");rail.setFixedWidth(178);r=QVBoxLayout(rail);r.setContentsMargins(0,0,0,0);r.setSpacing(0)
+        account=QFrame();account.setObjectName("account");a=QVBoxLayout(account);name=QLabel("JAVBED");name.setObjectName("logo");sub=QLabel("Universal Minecraft launcher");sub.setObjectName("small");a.addWidget(name);a.addWidget(sub);r.addWidget(account)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
         entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Servers","Updates","Settings")
         for i,label in enumerate(entries):
-            if i in (1,9):
-                section=QLabel("GAMES" if i==1 else "TOOLS");section.setObjectName("railSection");r.addWidget(section)
-            display={"Java":"JAVA EDITION","Bedrock":"BEDROCK EDITION","EDU":"EDUCATION","LCE":"LEGACY CONSOLE","Dungeons 2":"DUNGEONS II"}.get(label,label.upper())
+            display=label.upper() if label in ("Home","Settings","Updates") else (("MINECRAFT:\n" if label not in ("Servers","Dungeons","Dungeons 2","Legends","Story Mode") else "MINECRAFT\n" if label!="Servers" else "")+label.upper())
             b=QPushButton(display);b.setObjectName("nav");b.setCheckable(True);b.clicked.connect(lambda checked=False,x=i:self.select(x));r.addWidget(b);self.buttons.append(b)
-            artwork=cached_art(label)
-            if artwork:b.setIcon(QIcon(str(artwork)));b.setIconSize(QSize(23,23))
             page=HomePage(self) if label=="Home" else (StoryModePage() if label=="Story Mode" else (SettingsPage() if label=="Settings" else (UpdatesPage() if label=="Updates" else (ExtraPage(label) if label in EXTRA_GAMES else GamePage(label)))));self.pages.append(page);self.stack.addWidget(page)
             if label=="Story Mode":self.story_page=page
         r.addStretch();layout.addWidget(rail);layout.addWidget(self.stack,1);self.setCentralWidget(root);self.select(0);QTimer.singleShot(300,self.refresh_all)

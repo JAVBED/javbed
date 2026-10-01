@@ -1,50 +1,27 @@
-"""JAVBED's Minecraft Launcher inspired desktop theme."""
+"""The original dark JAVBED desktop theme."""
 
 STYLE = """
-QWidget {
-    background: #e9e9e9;
-    color: #202020;
-    font-family: 'Segoe UI';
-    font-size: 12px;
-}
-QFrame#rail { background: #202020; border-right: 1px solid #111; }
-QFrame#rail QLabel { background: transparent; color: #f1f1f1; }
-QFrame#account { background: #303030; border-bottom: 1px solid #111; }
-QLabel#logo { font-size: 23px; font-weight: 900; letter-spacing: 2px; }
-QLabel#railSection { color: #a9a9a9; font-size: 10px; font-weight: 800; padding: 12px 12px 4px; }
-QLabel#small { color: #5d5d5d; font-size: 11px; }
-QLabel#game { font-size: 17px; font-weight: 800; }
-QLabel#heroTitle { font-size: 31px; font-weight: 900; }
-QLabel#heroSub { font-size: 15px; color: #444; }
-QFrame#topbar { background: #f8f8f8; border-bottom: 1px solid #c8c8c8; }
-QFrame#playbar { background: #dadada; border-top: 1px solid #b9b9b9; border-bottom: 1px solid #b9b9b9; }
-QFrame#hero { background: #f7f7f7; border: 1px solid #bebebe; }
-QPushButton#nav {
-    background: #262626; color: #e9e9e9; border: 0;
-    text-align: left; padding: 9px 14px; font-size: 12px; font-weight: 700;
-}
-QPushButton#nav:hover { background: #383838; }
-QPushButton#nav:checked { background: #454545; border-left: 4px solid #77b334; padding-left: 10px; color: white; }
-QPushButton#tab { background: transparent; border: 0; padding: 13px 12px; font-size: 13px; font-weight: 700; }
-QPushButton#tab:checked { border-bottom: 4px solid #68a52f; }
-QPushButton#play {
-    background: #3b8526; color: white; border: 2px solid #1f4e18;
-    border-bottom: 5px solid #1f4e18; padding: 10px 28px;
-    font-size: 17px; font-weight: 900; min-height: 25px;
-}
-QPushButton#play:hover { background: #4c9c34; }
-QPushButton#play:disabled { background: #8eaa80; border-color: #687d5f; color: #dedede; }
-QPushButton#secondary {
-    background: #efefef; color: #222; border: 1px solid #8e8e8e;
-    border-bottom: 3px solid #777; padding: 8px 12px; font-weight: 800;
-}
-QPushButton#secondary:hover { background: #fff; }
-QPushButton#secondary:disabled { color: #888; background: #e1e1e1; }
-QComboBox, QLineEdit, QSpinBox {
-    background: #fff; color: #222; border: 1px solid #929292; padding: 7px;
-    selection-background-color: #4a8a2d;
-}
-QPlainTextEdit { background: #fff; color: #222; border: 1px solid #bcbcbc; font-family: Consolas, monospace; }
-QProgressBar { background: #c9c9c9; color: #111; border: 1px solid #888; text-align: center; min-height: 16px; }
-QProgressBar::chunk { background: #63a52f; }
+QWidget{background:#211f1e;color:white;font-family:'Segoe UI'}
+QFrame#rail{background:#2b2928;border-right:1px solid #111}
+QFrame#account{background:#222120;border-bottom:1px solid #111}
+QLabel#logo{font-size:17px;font-weight:800}
+QLabel#small{font-size:11px;color:#bbb}
+QLabel#game{font-size:16px;font-weight:900}
+QFrame#topbar{background:#242221;border-bottom:1px solid #111}
+QPushButton#tab{background:transparent;border:0;padding:13px 10px;font-size:15px}
+QPushButton#tab:checked{border-bottom:3px solid #54a82f;font-weight:700}
+QPushButton#nav{text-align:left;background:#353231;border:1px solid #191817;padding:15px 13px;font-size:13px;font-weight:800}
+QPushButton#nav:hover{background:#413d3b}
+QPushButton#nav:checked{background:#4a4644;border-left:4px solid white}
+QFrame#hero{background:#171615;border:1px solid #111}
+QLabel#heroTitle{font-size:34px;font-weight:900}
+QLabel#heroSub{font-size:15px;color:#ddd}
+QFrame#playbar{background:#292725;border-top:1px solid #111;border-bottom:1px solid #111}
+QPushButton#play{background:#3c8527;border:3px solid #171717;padding:12px 65px;font-size:19px;font-weight:900}
+QPushButton#play:hover{background:#4c9b35}
+QPushButton#secondary{background:#353331;border:1px solid #666;padding:10px 14px;font-weight:700}
+QComboBox,QLineEdit{background:#262422;border:1px solid #666;padding:9px}
+QPlainTextEdit{background:#121212;border:1px solid #333;font-family:Consolas,monospace}
+QProgressBar{background:#262422;border:1px solid #666;text-align:center;min-height:16px}
+QProgressBar::chunk{background:#54a82f}
 """

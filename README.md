@@ -2,7 +2,7 @@
 
 PySide6 desktop launcher for Java, Bedrock, Education, Legacy Console and Minecraft servers.
 
-JAVBED manages its own backend engines. It downloads compatible release binaries from the JAVBED GitHub organization into its private application-data directory. A path explicitly chosen in Settings takes priority over a managed engine; unrelated executables on PATH are ignored.
+JAVBED manages its own backend engines. It downloads compatible release binaries from the JAVBED GitHub organization into its private application-data directory. A path explicitly chosen in Settings takes priority; otherwise an executable on PATH is preferred over a managed copy.
 
 ## Run from source
 

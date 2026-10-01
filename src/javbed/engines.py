@@ -69,12 +69,17 @@ class Engine:
         override = os.getenv("JAVBED_" + self.label.upper().replace(" ", "_"))
         if override and Path(override).is_file():
             return Path(override)
+        on_path = shutil.which(self.binary)
+        if not on_path and platform.system() == "Windows":
+            on_path = shutil.which(self.binary + ".exe")
+        if on_path and Path(on_path).is_file():
+            return Path(on_path)
         return self.executable if self.executable.is_file() else None
 
     def command(self, *args):
         exe = self.locate()
         if not exe:
-            return None, f"{self.label} engine is not configured. Install it or choose its path in Settings."
+            return None, f"{self.label} engine is not configured. Add it to PATH, install it, or choose its path in Settings."
         if platform.system() == "Windows" and exe.suffix.lower() in (".cmd", ".bat"):
             return ["cmd.exe", "/d", "/c", str(exe), *args], None
         return [str(exe), *args], None

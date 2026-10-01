@@ -15,7 +15,7 @@ from javbed import engines
 
 
 class EngineTests(unittest.TestCase):
-    def test_managed_engine_ignores_path_and_explicit_override_wins(self):
+    def test_explicit_path_then_path_then_managed_engine(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             managed = root / "engines" / "javli" / "javli.exe"
@@ -26,9 +26,12 @@ class EngineTests(unittest.TestCase):
             unrelated.touch()
             engine = engines.Engine("Java", "javli", "javli")
             with patch.object(engines, "ENGINE_ROOT", root / "engines"), patch.object(engines.platform, "system", return_value="Windows"), patch.dict(os.environ, {"PATH": str(unrelated.parent), "JAVBED_JAVA": ""}):
-                self.assertEqual(engine.locate(), managed)
-                os.environ["JAVBED_JAVA"] = str(unrelated)
                 self.assertEqual(engine.locate(), unrelated)
+                os.environ["JAVBED_JAVA"] = str(managed)
+                self.assertEqual(engine.locate(), managed)
+                os.environ["JAVBED_JAVA"] = ""
+                os.environ["PATH"] = ""
+                self.assertEqual(engine.locate(), managed)
 
     def test_rejects_archive_traversal_and_links(self):
         with tempfile.TemporaryDirectory() as directory:
