@@ -27,6 +27,7 @@ DEFAULTS = {
     "game_legends_path": "",
     "bedrock_worlds_path": "",
     "edu_worlds_path": "",
+    "servli_home": "",
 }
 def load():
     data=dict(DEFAULTS)
@@ -53,3 +54,10 @@ def apply_environment(data):
     elif "CURSEFORGE_API_KEY" in _applied_env:
         os.environ.pop("CURSEFORGE_API_KEY",None)
         _applied_env.remove("CURSEFORGE_API_KEY")
+    home = str(data.get("servli_home", "")).strip()
+    if home:
+        os.environ["SERVLI_HOME"] = home
+        _applied_env.add("SERVLI_HOME")
+    elif "SERVLI_HOME" in _applied_env:
+        os.environ.pop("SERVLI_HOME", None)
+        _applied_env.remove("SERVLI_HOME")

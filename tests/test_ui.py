@@ -77,6 +77,11 @@ class UiTests(unittest.TestCase):
             self.assertTrue(window.java_page.shaders_panel.isVisible())
             window.java_page.switch_view("modpacks")
             self.assertTrue(window.java_page.modpacks_panel.isVisible())
+            window.select_name("Servers")
+            server_page = window.pages[window.stack.currentIndex()]
+            server_page.switch_view("dashboard")
+            self.assertTrue(server_page.server_dashboard.isVisible())
+            self.assertEqual(server_page.server_dashboard.tabs.count(), 8)
             wizard = InstanceWizard(window)
             self.assertEqual(len(wizard.pageIds()), 4)
             window.close()

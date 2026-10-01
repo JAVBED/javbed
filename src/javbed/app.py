@@ -16,6 +16,7 @@ from .modpack_browser import ModpackBrowser
 from .world_page import WorldPage
 from . import safemode
 from .crashdoctor import diagnose
+from .servers import ServerDashboard
 from .artwork import cached_art, load_async
 from .settings import apply_environment, load as load_settings, save as save_settings
 from .services import engine_status, javbed_update, open_url
@@ -383,6 +384,7 @@ class GamePage(QWidget):
             self.build_shaders()
         if self.label == "Servers":
             self.build_server_console()
+            self.build_server_dashboard()
         foot = QHBoxLayout()
         self.install = QPushButton("INSTALL / UPDATE ENGINE")
         self.install.setObjectName("secondary")
@@ -400,7 +402,7 @@ class GamePage(QWidget):
         frame.setObjectName("topbar")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(18, 5, 18, 5)
-        tabs = (("Play","play"),("Instances","instances"),("Mods","mods"),("Modpacks","modpacks"),("Resource Packs","resources"),("Shaders","shaders"),("Accounts","accounts")) if self.label=="Java" else ((("Servers","play"),("Console","console")) if self.label=="Servers" else (("Play","play"),))
+        tabs = (("Play","play"),("Instances","instances"),("Mods","mods"),("Modpacks","modpacks"),("Resource Packs","resources"),("Shaders","shaders"),("Accounts","accounts")) if self.label=="Java" else ((("Servers","play"),("Dashboard","dashboard"),("Console","console")) if self.label=="Servers" else (("Play","play"),))
         self.tab_buttons = {}
         for title, key in tabs:
             button = QPushButton(title)
@@ -418,6 +420,8 @@ class GamePage(QWidget):
             self.hero.setVisible(key == "play")
             self.playbar.setVisible(key == "play")
             self.server_console_panel.setVisible(key == "console")
+            self.server_dashboard.setVisible(key == "dashboard")
+            if key == "dashboard":self.server_dashboard.refresh()
             for name, button in self.tab_buttons.items(): button.setChecked(name == key)
             return
         if self.label != "Java":
@@ -449,6 +453,11 @@ class GamePage(QWidget):
         row3=QHBoxLayout();self.player_name=QLineEdit();self.player_name.setPlaceholderText("Player name");row3.addWidget(self.player_name);row3.addWidget(self.button("OP",lambda:self.player_command("op")));row3.addWidget(self.button("DEOP",lambda:self.player_command("deop")));row3.addWidget(self.button("WHITELIST ADD",lambda:self.player_command("whitelist add")));row3.addWidget(self.button("WHITELIST REMOVE",lambda:self.player_command("whitelist remove")));row3.addWidget(self.button("LIST PLAYERS",lambda:self.player_command("list")));box.addLayout(row3)
         row4=QHBoxLayout();self.backup_name=QLineEdit();self.backup_name.setPlaceholderText("Backup filename for restore");row4.addWidget(self.button("BACKUP",self.create_backup,True));row4.addWidget(self.button("LIST BACKUPS",self.list_backups));row4.addWidget(self.backup_name);row4.addWidget(self.button("RESTORE",self.restore_backup));box.addLayout(row4)
         self.server_console_output=QPlainTextEdit();self.server_console_output.setReadOnly(True);box.addWidget(self.server_console_output);self.root.insertWidget(2,self.server_console_panel,1)
+
+    def build_server_dashboard(self):
+        self.server_dashboard = ServerDashboard(lambda args, callback: self.run(args, target=self.output, finished=callback), self)
+        self.server_dashboard.hide()
+        self.root.insertWidget(2, self.server_dashboard, 1)
 
     def selected_server(self):
         name=self.server.text().strip()
@@ -860,8 +869,10 @@ class SettingsPage(QWidget):
         form.addRow("Java memory", self.memory); form.addRow("Window width", self.width); form.addRow("Window height", self.height); form.addRow("Fullscreen", self.fullscreen); form.addRow("Close launcher on game start", self.close_on_launch); form.addRow("Check for updates", self.check_updates); form.addRow("Minecraft directory", self.minecraft_dir); form.addRow("Java runtime", self.java_runtime); form.addRow("CurseForge API key", self.curseforge)
         self.bedrock_worlds = QLineEdit(str(self.data.get("bedrock_worlds_path", "")))
         self.edu_worlds = QLineEdit(str(self.data.get("edu_worlds_path", "")))
+        self.servli_home = QLineEdit(str(self.data.get("servli_home", "")))
         form.addRow("Bedrock worlds folder", self.bedrock_worlds)
         form.addRow("EDU worlds folder", self.edu_worlds)
+        form.addRow("SERVLI home", self.servli_home)
         self.engine_fields = {}
         for label, key in (("JAVLI path","engine_java"),("BEDLI path","engine_bedrock"),("EDULI path","engine_edu"),("LEGLI path","engine_lce"),("SERVLI path","engine_servers")):
             field = QLineEdit(str(self.data.get(key,""))); self.engine_fields[key]=field; form.addRow(label, field)
@@ -873,7 +884,7 @@ class SettingsPage(QWidget):
         self.status = QLabel(""); root.addWidget(self.status); root.addStretch()
     def save(self):
         self.data=load_settings()
-        self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip(),"bedrock_worlds_path":self.bedrock_worlds.text().strip(),"edu_worlds_path":self.edu_worlds.text().strip()})
+        self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip(),"bedrock_worlds_path":self.bedrock_worlds.text().strip(),"edu_worlds_path":self.edu_worlds.text().strip(),"servli_home":self.servli_home.text().strip()})
         for key, field in self.engine_fields.items(): self.data[key]=field.text().strip()
         save_settings(self.data); apply_environment(self.data); self.status.setText("Settings saved.")
     def open_data(self):

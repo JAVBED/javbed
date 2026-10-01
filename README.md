@@ -39,6 +39,8 @@ Java instances can be exported as versioned `.javbed` packages and reconstructed
 
 The Java instance menu includes **Play in Safe Mode**. JAVBED temporarily renames that instance's mod JARs, then restores them after Minecraft exits; a recovery journal survives launcher restarts. When a Java instance exits abnormally or writes a new crash report, Crash Doctor checks recent evidence for common mod, loader, Java, memory, and library errors. Its dialog links to the log, crash report, mods folder, and Safe Mode. Diagnoses are suggestions when the evidence is ambiguous.
 
+The **Servers → Dashboard** tab uses SERVLI's structured server and backup listings. Server cards show software, Minecraft version, status, PID, RAM, port, and uptime. Open a server's console or settings for live log output, commands, player moderation, common and advanced properties, backups, plugins, mods, and server folders. SERVLI owns server start, stop, restore, and backup operations. Backup schedules (30 minutes, hourly, every N hours, daily, or on stop) and retention run in SERVLI while the server is running, even after JAVBED closes. The current SERVLI source is needed for `--json` listings and scheduling.
+
 ## Releases
 
 Use the manually dispatched **Build and Release JAVBED** workflow to build and publish platform packages. Leave its version input blank to choose the next patch tag automatically. Pushes to `main` and pull requests run the test workflow; they do not publish releases.
