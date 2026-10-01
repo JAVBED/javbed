@@ -27,15 +27,6 @@ jobs:
           REQUESTED: ${{ inputs.version }}
         run: python tools/release_tag.py
 
-      - name: Create and push tag
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" -m "JAVBED $TAG"
-          git push origin "$TAG"
-
   build:
     needs: prepare
     strategy:
@@ -54,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare.outputs.tag }}
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-python@v5
         with:
@@ -148,10 +139,24 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
           merge-multiple: true
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "JAVBED $TAG"
+          git push origin "$TAG"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
