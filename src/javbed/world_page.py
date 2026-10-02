@@ -59,6 +59,10 @@ class WorldPage(QWidget):
             self.status.setText(("Done: " if ok else "Failed: ") + str(result)[:200])
             if ok:
                 self.completed.emit(label)
+                manager=getattr(self.window(),"plugin_manager",None)
+                if manager:
+                    event="world.backed_up" if label.startswith("Backing up") else "world.restored" if label.startswith("Restoring") else None
+                    if event:manager.events.emit(event,result=str(result))
             if ok and after:
                 after(result)
 
@@ -111,6 +115,14 @@ class WorldPage(QWidget):
                 button.setObjectName("secondary")
                 button.clicked.connect(lambda checked=False, fn=callback: fn())
                 actions.addWidget(button)
+            manager=getattr(self.window(),"plugin_manager",None)
+            if manager:
+                from .plugins.api import WorldInfo
+                info=WorldInfo(world.name,world.edition,world.instance,str(world.path),world.version)
+                for action in manager.ui.all("world_action"):
+                    button=QPushButton(action.title);button.setObjectName("secondary")
+                    button.clicked.connect(lambda checked=False,entry=action,value=info:manager.ui.invoke(entry,value))
+                    actions.addWidget(button)
             actions.addStretch()
             layout.addLayout(actions)
             self.cards.insertWidget(self.cards.count() - 1, card)

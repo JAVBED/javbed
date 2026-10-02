@@ -238,6 +238,12 @@ class InstanceLibrary(QWidget):
         menu.addAction("Export .javbed", lambda: self.export_portable(item))
         menu.addAction("Open Folder", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(item["path"]))))
         menu.addAction("Change Icon", lambda: self.change_icon(item))
+        manager=getattr(self.window(),"plugin_manager",None)
+        if manager:
+            from .plugins.api import InstanceInfo
+            info=InstanceInfo(str(item["name"]),str(item.get("version") or ""),str(item.get("loader") or "vanilla"),str(item.get("era") or "release"),str(item.get("path") or ""))
+            for action in manager.ui.all("instance_action"):
+                menu.addAction(action.title,lambda checked=False,entry=action,value=info:manager.ui.invoke(entry,value))
         menu.addSeparator()
         menu.addAction("Delete", lambda: self.delete_instance(item))
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))

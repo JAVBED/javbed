@@ -14,3 +14,6 @@ javbed = "javbed.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools]
+py-modules = ["javbed_plugin_api"]
