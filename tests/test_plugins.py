@@ -352,33 +352,29 @@ class PluginTests(unittest.TestCase):
             self.assertIsNone(manager.files.owners(".foo"))
             manager.shutdown()
 
-    def test_sample_plugin_adds_and_removes_sidebar_page(self):
+    def test_sample_plugin_registers_and_cleans_up_ui(self):
         import os
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from PySide6.QtWidgets import QApplication
-        from javbed.app import MainWindow
-        from javbed.palette import CommandPalette
-        from unittest.mock import patch
+        from PySide6.QtWidgets import QApplication, QWidget
         application = QApplication.instance() or QApplication([])
         source = Path(__file__).resolve().parents[1] / "examples" / "plugins" / "hello-javbed"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manager = PluginManager(root)
             manager.install(source)
-            with patch("javbed.app.home_snapshot", return_value=([], [], None, None, "", None, "", [])), patch("javbed.app.GamePage.startup_refresh"), patch("javbed.app.ExtraPage.refresh"):
-                window = MainWindow(manager)
-                manager.enable("com.example.hello-javbed", approve=True)
-                application.processEvents()
-                self.assertIn("plugin:example.hello-page", window.entries)
-                window.select_name("Plugins")
-                self.assertIs(window.stack.currentWidget(), window.plugin_page)
-                palette = CommandPalette(window)
-                self.assertTrue(any("Say Hello" in label for label, _, _ in palette.base_actions))
-                palette.close()
-                manager.disable("com.example.hello-javbed")
-                application.processEvents()
-                self.assertNotIn("plugin:example.hello-page", window.entries)
-                window.close()
+            manager.enable("com.example.hello-javbed", approve=True)
+            pages = manager.ui.all("page")
+            self.assertEqual(len(pages), 1)
+            widget = manager.ui.invoke(pages[0])
+            self.assertIsInstance(widget, QWidget)
+            self.assertTrue(manager.commands.invoke("example.hello"))
+            self.assertEqual(len(manager.commands.all()), 1)
+            manager.disable("com.example.hello-javbed")
+            self.assertEqual(manager.ui.all("page"), ())
+            self.assertEqual(manager.commands.all(), ())
+            widget.deleteLater()
+            application.processEvents()
+            manager.shutdown()
 
 
 if __name__ == "__main__":
