@@ -22,7 +22,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QObject, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal, Slot
 
 from javbed import __version__
 from javbed.engines import ENGINES
@@ -31,7 +31,7 @@ from javbed.settings import ROOT
 from .api import JavbedPlugin
 from .context import PluginContext
 from .manifest import PluginManifest, compare, satisfies
-from .registries import CommandRegistry, EventBus, RouteRegistry, UIRegistry
+from .registries import CommandRegistry, ContributionRegistry, EventBus, RouteRegistry, UIRegistry
 
 
 class _Dispatcher(QObject):
@@ -39,7 +39,11 @@ class _Dispatcher(QObject):
 
     def __init__(self):
         super().__init__()
-        self.requested.connect(lambda fn: fn())
+        self.requested.connect(self._execute)
+
+    @Slot(object)
+    def _execute(self, fn):
+        fn()
 
     def post(self, fn):
         if QCoreApplication.instance():
@@ -70,6 +74,7 @@ class PluginRecord:
 class DownloadTask:
     future: object
     cancel_event: threading.Event
+    owner: str
 
     def cancel(self):
         self.cancel_event.set()
@@ -89,6 +94,7 @@ class PluginManager:
         self.events = EventBus(self._fail)
         self.commands = CommandRegistry(self._fail)
         self.ui = UIRegistry(self._fail)
+        self.contributions = ContributionRegistry(self._fail)
         self.files = RouteRegistry(self._fail)
         self.links = RouteRegistry(self._fail)
         self._state = self._read_state()
@@ -98,6 +104,7 @@ class PluginManager:
         self._activity = None
         self._run_command = None
         self._downloads: list[DownloadTask] = []
+        self._tasks: dict[str, set[Future]] = {}
         self._closed = False
 
     def _read_state(self):
@@ -173,7 +180,7 @@ class PluginManager:
         return order
 
     def load_enabled(self):
-        if self.safe_mode:
+        if self.safe_mode or self._closed:
             return
         ids = [record.id for record in self.records.values() if record.enabled and record.manifest and record.approved_permissions == record.manifest.permissions.names]
         for identifier in ids:
@@ -183,6 +190,8 @@ class PluginManager:
                 record = self.records[identifier]
                 record.status, record.error = "blocked", str(exc)
         for identifier in ids:
+            if self._closed:
+                return
             record = self.records[identifier]
             if record.status == "blocked":
                 continue
@@ -211,7 +220,7 @@ class PluginManager:
         return logger
 
     def _load(self, record):
-        if self.safe_mode or not record.manifest or record.approved_permissions != record.manifest.permissions.names:
+        if self._closed or self.safe_mode or not record.manifest or record.approved_permissions != record.manifest.permissions.names:
             raise ValueError("Plugin is not approved for this session")
         if compare(self.app_version, record.manifest.minimum_version) < 0 or (record.manifest.maximum_version and compare(self.app_version, record.manifest.maximum_version) > 0):
             raise ValueError("Incompatible JAVBED application version")
@@ -245,6 +254,8 @@ class PluginManager:
             plugin.on_enable()
             if record.status != "loading":
                 raise RuntimeError(record.error or "Plugin was quarantined during enable")
+            if self._closed:
+                raise RuntimeError("Launcher closed during plugin load")
             record.status, record.error = "enabled", ""
             logger.info("Loaded")
         except Exception as exc:
@@ -291,7 +302,12 @@ class PluginManager:
 
     def _cleanup(self, record):
         owner = record.id
-        for registry in (self.events, self.commands, self.ui, self.files, self.links):
+        for task in list(self._downloads):
+            if task.owner == owner:
+                task.cancel()
+        for future in self._tasks.pop(owner, set()):
+            future.cancel()
+        for registry in (self.events, self.commands, self.ui, self.contributions, self.files, self.links):
             registry.remove_owner(owner)
         if record.module_prefix:
             for name in list(sys.modules):
@@ -369,11 +385,18 @@ class PluginManager:
         self._save_state()
 
     def _fail(self, owner, operation, exc):
+        formatted = traceback.format_exc()
+        if QCoreApplication.instance() and QThread.currentThread() != self._dispatcher.thread():
+            self._dispatcher.post(lambda: self._fail_now(owner, operation, exc, formatted))
+            return
+        self._fail_now(owner, operation, exc, formatted)
+
+    def _fail_now(self, owner, operation, exc, formatted):
         record = self.records.get(owner)
         message = f"{operation}: {exc}"
         if record:
             if record.logger:
-                record.logger.error("%s\n%s", message, traceback.format_exc())
+                record.logger.error("%s\n%s", message, formatted)
             record.status, record.error = "error", message
             self._cleanup(record)
         self.errors.append(f"{owner}: {message}")
@@ -428,6 +451,20 @@ class PluginManager:
             return True
         return self._executor.submit(run)
 
+    def submit_task(self, owner, callback, *args):
+        self.check_active(owner)
+        def run():
+            try:
+                return callback(*args)
+            except Exception as exc:
+                self._fail(owner, "background task", exc)
+                raise
+        future = self._executor.submit(run)
+        tasks = self._tasks.setdefault(owner, set())
+        tasks.add(future)
+        future.add_done_callback(lambda done: tasks.discard(done))
+        return future
+
     def download(self, owner, url, target, title):
         if self._closed:
             raise RuntimeError("Plugin manager has shut down")
@@ -467,7 +504,7 @@ class PluginManager:
                     self._dispatcher.post(lambda e=str(exc): self._activity.finish(activity_id["value"], False, e) if activity_id["value"] else None)
                 raise
 
-        task = DownloadTask(self._executor.submit(run), cancelled)
+        task = DownloadTask(self._executor.submit(run), cancelled, owner)
         self._downloads.append(task)
         task.future.add_done_callback(lambda _: self._downloads.remove(task) if task in self._downloads else None)
         return task

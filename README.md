@@ -2,7 +2,7 @@
 
 ## Plugin system
 
-Extend JAVBED without modifying the launcher. Install a plugin directory, `.zip`, or `.javbedplugin` from **Settings → Plugins**. JAVBED reviews permissions before enabling third-party code, keeps plugin data separate, and supports `--safe-mode` to start without plugins. There is no public plugin marketplace. See the [Plugin API 1 developer guide](docs/plugins/README.md) and the [disabled example plugin](examples/plugins/hello-javbed).
+Extend JAVBED without modifying the launcher. Install a plugin directory, `.zip`, or `.javbedplugin` from **Settings → Plugins**. Plugins can add pages, commands, context actions, game integrations, server providers, importers, diagnostics, Java tools, metadata, and update checks through documented extension points. JAVBED reviews permissions before enabling third-party code, keeps plugin data separate, and supports `--safe-mode` to start without plugins. There is no public plugin marketplace. See the [Plugin API 1 developer guide](docs/plugins/README.md) and the [disabled example plugin](examples/plugins/hello-javbed).
 
 PySide6 desktop launcher for Java, Bedrock, Education, Legacy Console and Minecraft servers.
 

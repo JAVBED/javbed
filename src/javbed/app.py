@@ -33,7 +33,7 @@ from .theme import STYLE, stylesheet
 from .shell_widgets import AccountHeader, InstallationFrame, StatusLabel, game_icon, sidebar_button
 from . import __version__
 from .plugins.manager import PluginManager
-from .plugins.ui import PluginManagerPage
+from .plugins.ui import PluginExtensionsPage, PluginManagerPage
 
 EXTRA_GAMES={
 "Dungeons":(("MinecraftDungeons.exe","Dungeons.exe"),"Minecraft Dungeons"),
@@ -889,6 +889,11 @@ class GamePage(QWidget):
             for w in (self.server,self.provider,self.version):self.controls.addWidget(w)
             self.controls.addWidget(self.button("CREATE",self.create,True));self.controls.addWidget(self.button("LIST",lambda:self.run(["list"],target=self.output)));self.controls.addWidget(self.button("START",lambda:self.action("start")));self.controls.addWidget(self.button("STOP",lambda:self.action("stop")));self.controls.addWidget(self.button("RESTART",lambda:self.action("restart")));self.controls.addWidget(self.button("STATUS",lambda:self.action("status")))
     def refresh_server_versions(self):
+        selected=self.provider.currentData() if self.label=="Servers" else None
+        if isinstance(selected,str) and selected.startswith("plugin:"):
+            self.version.clear();self.version.addItem("latest")
+            self.status.setText("Plugin server provider selected. Enter a version in Extensions if needed.")
+            return
         if self.label != "Servers" or not self.engine.locate():
             return
         provider = self.provider.currentText()
@@ -962,6 +967,21 @@ class GamePage(QWidget):
     def create(self):
         n=self.server.text().strip()
         if not n:self.status.setText("Enter a server name.");return
+        selected=self.provider.currentData()
+        if isinstance(selected,str) and selected.startswith("plugin:"):
+            from .instances import valid_name
+            if not valid_name(n):self.status.setText("Invalid server name.");return
+            manager=getattr(self.window(),"plugin_manager",None)
+            item=manager.contributions.get(selected.removeprefix("plugin:")) if manager else None
+            if not item or item.kind!="server_provider":self.status.setText("Plugin provider is unavailable.");return
+            version=self.version.currentText().strip() or "latest"
+            job=Job(lambda:manager.contributions.invoke(item,n,version))
+            def done(ok,result):
+                succeeded=ok and result is not False and manager.records.get(item.owner) and manager.records[item.owner].status=="enabled"
+                self.status.setText("Created server "+n if succeeded else "Plugin provider failed. See plugin logs.")
+                if succeeded:self.server_dashboard.refresh()
+            job.signals.done.connect(done);self.pool.start(job)
+            return
         self.run(["create",n,self.provider.currentText(),self.version.currentText().strip() or "latest"])
     def action(self,a):
         n=self.server.text().strip()
@@ -1412,14 +1432,14 @@ class MainWindow(QMainWindow):
         nav_scroll.setWidget(nav_content);r.addWidget(nav_scroll,1)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
         self.palette_shortcut=QShortcut(QKeySequence("Ctrl+K"),self);self.palette_shortcut.activated.connect(self.open_palette)
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Activity","Doctor","Settings","Plugins")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Extensions","Updates","Activity","Doctor","Settings","Plugins")
         self.entries=list(entries)
         self.plugin_pages={}
         for i,label in enumerate(entries):
             if label in ("Updates","Activity","Doctor","Settings","Plugins"):
                 b=None
             else:
-                display={"Home":"HOME","Java":"MINECRAFT:\nJAVA EDITION","Bedrock":"MINECRAFT:\nBEDROCK EDITION","EDU":"MINECRAFT\nEDUCATION","LCE":"MINECRAFT\nLEGACY CONSOLE","Dungeons":"MINECRAFT\nDUNGEONS","Dungeons 2":"MINECRAFT\nDUNGEONS II","Legends":"MINECRAFT\nLEGENDS","Story Mode":"MINECRAFT\nSTORY MODE","Worlds":"WORLDS","Servers":"SERVERS"}[label]
+                display={"Home":"HOME","Java":"MINECRAFT:\nJAVA EDITION","Bedrock":"MINECRAFT:\nBEDROCK EDITION","EDU":"MINECRAFT\nEDUCATION","LCE":"MINECRAFT\nLEGACY CONSOLE","Dungeons":"MINECRAFT\nDUNGEONS","Dungeons 2":"MINECRAFT\nDUNGEONS II","Legends":"MINECRAFT\nLEGENDS","Story Mode":"MINECRAFT\nSTORY MODE","Worlds":"WORLDS","Servers":"SERVERS","Extensions":"EXTENSIONS"}[label]
                 b=sidebar_button(display,label)
                 b.clicked.connect(lambda checked=False,x=i:self.select(x))
                 nav_layout.addWidget(b)
@@ -1438,6 +1458,8 @@ class MainWindow(QMainWindow):
                 page = SettingsPage()
             elif label == "Plugins":
                 page = PluginManagerPage(self.plugin_manager,developer_mode=bool(load_settings().get("developer_mode",False)),parent=self);self.plugin_page=page
+            elif label == "Extensions":
+                page = PluginExtensionsPage(self.plugin_manager,parent=self);self.extension_page=page
             elif label == "Updates":
                 page = UpdatesPage(self.activity, self)
             elif label in EXTRA_GAMES:
@@ -1490,7 +1512,8 @@ class MainWindow(QMainWindow):
         self.toast.hide()
         startup=str(load_settings().get("startup_page") or "Home")
         self.select(entries.index(startup) if startup in entries else 0)
-        self.plugin_manager.ui.changed=self.sync_plugin_pages
+        self.plugin_manager.ui.changed=lambda:self.plugin_manager._dispatcher.post(self.sync_plugin_pages)
+        self.plugin_manager.contributions.changed=lambda:self.plugin_manager._dispatcher.post(self.sync_plugin_contributions)
         QTimer.singleShot(300,self.refresh_all);QTimer.singleShot(500,self.recover_safe_modes)
         QTimer.singleShot(1200,self.maybe_onboard)
         QTimer.singleShot(5000,self.auto_check_updates)
@@ -1609,6 +1632,19 @@ class MainWindow(QMainWindow):
             self.plugin_pages[identifier]=(button,widget)
         if hasattr(self,"plugin_page"):
             self.plugin_page.refresh()
+    def sync_plugin_contributions(self):
+        self.extension_page.refresh()
+        server=self.server_page
+        combo=server.provider
+        selected=combo.currentData() or combo.currentText()
+        for index in range(combo.count()-1,-1,-1):
+            data=combo.itemData(index)
+            if isinstance(data,str) and data.startswith("plugin:"):
+                combo.removeItem(index)
+        for item in self.plugin_manager.contributions.all("server_provider"):
+            combo.addItem(item.title+" (plugin)","plugin:"+item.id)
+        position=combo.findData(selected) if isinstance(selected,str) and selected.startswith("plugin:") else combo.findText(selected)
+        if position>=0:combo.setCurrentIndex(position)
     def open_deep_link(self, uri):
         from urllib.parse import unquote, urlparse
         from .plugins.manifest import ID
@@ -1663,7 +1699,7 @@ class MainWindow(QMainWindow):
             else:
                 page.run([page.version.currentText().strip()])
     def dragEnterEvent(self, event):
-        supported = {".jar", ".mrpack", ".zip", ".iso"} | set(self.plugin_manager.files._items)
+        supported = {".jar", ".mrpack", ".zip", ".iso"} | set(self.plugin_manager.files.routes())
         if event.mimeData().hasUrls() and any(Path(url.toLocalFile()).suffix.lower() in supported for url in event.mimeData().urls() if url.isLocalFile()):
             event.acceptProposedAction()
 
@@ -1684,9 +1720,9 @@ class MainWindow(QMainWindow):
                 choice,ok=QInputDialog.getItem(self,"Open file",source.name+" can be handled by:",["JAVBED",handler[0]],0,False)
                 if not ok:return
                 if choice!="JAVBED":
-                    self.plugin_manager.files.invoke(suffix,source);return
+                    self.plugin_manager._executor.submit(self.plugin_manager.files.invoke,suffix,source);return
             else:
-                self.plugin_manager.files.invoke(suffix,source);return
+                self.plugin_manager._executor.submit(self.plugin_manager.files.invoke,suffix,source);return
         if suffix == ".mrpack":
             self.select_name("Java")
             self.java_page.switch_view("modpacks")
@@ -1742,6 +1778,8 @@ class MainWindow(QMainWindow):
         if i == 0 and self.pages:
             self.pages[0].refresh()
     def closeEvent(self,event):
+        self.plugin_manager.ui.changed=lambda:None
+        self.plugin_manager.contributions.changed=lambda:None
         self.plugin_manager.shutdown()
         if hasattr(self,"story_page") and self.story_page.download_job:
             self.story_page.download_job.cancelled.set()
@@ -1766,17 +1804,28 @@ def main():
             manager.safe_mode=True
     w=MainWindow(manager);w.show()
     def start_plugins():
-        if not manager.safe_mode:
-            startup_marker.parent.mkdir(parents=True,exist_ok=True)
-            try:
-                previous=int(startup_marker.read_text(encoding="utf-8")) if startup_marker.is_file() else 0
-            except (OSError,ValueError):previous=0
-            startup_marker.write_text(str(previous+1),encoding="utf-8")
-            manager.load_enabled()
+        if manager.safe_mode:
+            manager.events.emit("javbed.started")
+            w.plugin_page.refresh()
+            return
+        startup_marker.parent.mkdir(parents=True,exist_ok=True)
+        try:
+            previous=int(startup_marker.read_text(encoding="utf-8")) if startup_marker.is_file() else 0
+        except (OSError,ValueError):previous=0
+        startup_marker.write_text(str(previous+1),encoding="utf-8")
+        job=Job(manager.load_enabled)
+        def loaded(ok,result):
+            if manager._closed:
+                return
+            if not ok:
+                manager.errors.append("Plugin startup: "+str(result))
             w.sync_plugin_pages()
-        manager.events.emit("javbed.started")
-        w.plugin_page.refresh()
-        startup_marker.unlink(missing_ok=True)
+            w.extension_page.refresh()
+            manager.events.emit("javbed.started")
+            w.plugin_page.refresh()
+            startup_marker.unlink(missing_ok=True)
+        job.signals.done.connect(loaded)
+        QThreadPool.globalInstance().start(job)
     QTimer.singleShot(0,start_plugins)
     if sys.platform == "win32" and getattr(sys, "frozen", False):
         try:register_windows(sys.executable)

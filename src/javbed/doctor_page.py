@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
-from .diagnostics import scan
+from .diagnostics import Check, scan
 from .engines import ENGINES
 from .jobs import Job
 
@@ -43,7 +43,24 @@ class DoctorPage(QWidget):
         if self.job:
             return
         self.status.setText("Running diagnostics...")
-        job = Job(scan)
+        manager = getattr(self.window(), "plugin_manager", None)
+        extensions = manager.contributions.all("diagnostic") if manager else ()
+
+        def run_checks():
+            checks = scan()
+            if manager:
+                from .plugins.api import DiagnosticResult
+                for extension in extensions:
+                    result = manager.contributions.invoke(extension)
+                    if result is None:
+                        continue
+                    if not isinstance(result, DiagnosticResult) or result.state not in ("healthy", "warning", "failed"):
+                        manager._fail(extension.owner, "diagnostic result", TypeError("Expected DiagnosticResult with a valid state"))
+                        continue
+                    checks.append(Check(extension.title + ": " + result.name, result.state, result.detail))
+            return checks
+
+        job = Job(run_checks)
         self.job = job
 
         def done(ok, checks):
@@ -61,6 +78,7 @@ class DoctorPage(QWidget):
                 layout = QHBoxLayout(frame)
                 symbol = {"healthy": "✓", "warning": "⚠", "failed": "✕"}[check.state]
                 text = QLabel(f"{symbol}  {check.name} — {check.detail}")
+                text.setTextFormat(Qt.TextFormat.PlainText)
                 text.setWordWrap(True)
                 layout.addWidget(text, 1)
                 if check.repair_engine:

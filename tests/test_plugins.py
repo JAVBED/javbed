@@ -5,9 +5,12 @@ import tempfile
 import unittest
 import zipfile
 import stat
+import threading
 from pathlib import Path
+from unittest.mock import patch
 
 from javbed.plugins.context import PluginContext
+from javbed.plugins.api import DiagnosticResult
 from javbed.plugins.manager import PluginManager
 from javbed.plugins.manifest import PluginManifest, compare
 from javbed.plugins.packages import inspect, install
@@ -35,6 +38,151 @@ def make_plugin(root, identifier="com.example.hello", permissions=None, code=Non
 
 
 class PluginTests(unittest.TestCase):
+    def test_extended_contributions_permissions_and_reload_cleanup(self):
+        code = "from javbed_plugin_api import JavbedPlugin, DiagnosticResult\nclass Plugin(JavbedPlugin):\n    def on_load(self, context):\n        context.integrations.register(id='example.game', title='Example game', callback=lambda: 'launched')\n        context.server_providers.register(id='example.server', title='Example server', callback=lambda name, version: name + version)\n        context.diagnostics.register(id='example.check', title='Example check', callback=lambda: DiagnosticResult('Ready', 'healthy', 'OK'))\n        context.java.register_tool(id='example.tool', title='Example tool', callback=lambda: 'done')\n        context.metadata.register(id='example.meta', title='Example metadata', callback=lambda instance: {'Name': instance.name})\n        context.update_providers.register(id='example.updates', title='Example updates', callback=lambda: 'current')\n        context.importers.register(id='example.import', title='Example import', extension='.example', callback=lambda path: path.name)\ndef create_plugin(): return Plugin()\n"
+        permissions = ["integrations", "server_providers", "diagnostics", "java_tools", "metadata", "instances.read", "update_providers", "network", "importers", "files.read"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root, permissions=permissions, code=code)
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.hello", approve=True)
+            self.assertEqual(len(manager.contributions.all("game")), 1)
+            self.assertEqual(manager.contributions.invoke(manager.contributions.all("diagnostic")[0]), DiagnosticResult("Ready", "healthy", "OK"))
+            self.assertEqual(manager.files.invoke(".example", root / "file.example"), True)
+            manager.reload("com.example.hello")
+            self.assertEqual(len(manager.contributions.all("game")), 1)
+            manager.disable("com.example.hello")
+            self.assertEqual(manager.contributions.all("game"), ())
+            self.assertIsNone(manager.files.owners(".example"))
+            manager.shutdown()
+
+    def test_extended_permission_checks_and_collision(self):
+        plain = "from javbed_plugin_api import JavbedPlugin\ndef create_plugin(): return JavbedPlugin()\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root, permissions=["integrations"], code=plain)
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.hello", approve=True)
+            context = PluginContext(manager, "com.example.hello", manager.records["com.example.hello"].logger)
+            with self.assertRaises(PermissionError):
+                context.server_providers.register(id="example.provider", title="Provider", callback=lambda *_: None)
+            with self.assertRaises(PermissionError):
+                context.process.launch(root / "missing")
+            with self.assertRaises(PermissionError):
+                context.events.subscribe("account.changed", lambda **data: None)
+            context.integrations.register(id="example.game", title="Game", callback=lambda: None)
+            with self.assertRaisesRegex(ValueError, "Duplicate"):
+                context.integrations.register(id="example.game", title="Game", callback=lambda: None)
+            manager.shutdown()
+
+    def test_contribution_registry_can_be_read_during_worker_registration(self):
+        from concurrent.futures import Future
+        from javbed.plugins.registries import ContributionRegistry
+        registry = ContributionRegistry(lambda *_: None)
+        errors = []
+
+        def register():
+            try:
+                for index in range(300):
+                    registry.register("example", "game", id=f"example.game{index}", title="Game", callback=lambda: None)
+            except Exception as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=register)
+        worker.start()
+        while worker.is_alive():
+            tuple(registry.all("game"))
+        worker.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(registry.all("game")), 300)
+        completed = Future()
+        completed.set_result("launched")
+        registry.register("example", "game", id="example.future", title="Future", callback=lambda: completed)
+        self.assertEqual(registry.invoke_id("example.future"), "launched")
+
+    def test_broken_provider_is_quarantined_without_affecting_other_plugins(self):
+        broken = "from javbed_plugin_api import JavbedPlugin\nclass Plugin(JavbedPlugin):\n    def on_load(self, context): context.integrations.register(id='example.broken', title='Broken', callback=lambda: 1/0)\ndef create_plugin(): return Plugin()\n"
+        plain = "from javbed_plugin_api import JavbedPlugin\ndef create_plugin(): return JavbedPlugin()\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root, "com.example.broken", permissions=["integrations"], code=broken)
+            make_plugin(root, "com.example.healthy", permissions=[], code=plain)
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.broken", approve=True)
+            manager.enable("com.example.healthy", approve=True)
+            self.assertIsNone(manager.contributions.invoke(manager.contributions.all("game")[0]))
+            self.assertEqual(manager.records["com.example.broken"].status, "error")
+            self.assertEqual(manager.records["com.example.healthy"].status, "enabled")
+            self.assertEqual(manager.contributions.all("game"), ())
+            manager.shutdown()
+
+    def test_process_launch_uses_no_shell_and_returns_pid(self):
+        plain = "from javbed_plugin_api import JavbedPlugin\ndef create_plugin(): return JavbedPlugin()\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "tool.exe"
+            executable.write_bytes(b"placeholder")
+            make_plugin(root, permissions=["process.launch"], code=plain)
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.hello", approve=True)
+            context = PluginContext(manager, "com.example.hello", manager.records["com.example.hello"].logger)
+            with patch("javbed.plugins.context.subprocess.Popen") as popen:
+                popen.return_value.pid = 123
+                self.assertEqual(context.process.launch(executable, "--version").result(timeout=2), 123)
+                self.assertEqual(popen.call_args.args[0], [str(executable.resolve()), "--version"])
+                self.assertFalse(popen.call_args.kwargs["shell"])
+            manager.shutdown()
+
+    def test_mods_structured_read_and_safe_remove(self):
+        plain = "from javbed_plugin_api import JavbedPlugin\ndef create_plugin(): return JavbedPlugin()\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "instance" / "minecraft" / "mods"
+            folder.mkdir(parents=True)
+            (folder / "example.jar").write_bytes(b"jar")
+            (folder / "disabled.jar.disabled").write_bytes(b"jar")
+            make_plugin(root, permissions=["mods.read", "mods.modify"], code=plain)
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.hello", approve=True)
+            context = PluginContext(manager, "com.example.hello", manager.records["com.example.hello"].logger)
+            with patch("javbed.instances.get_instance", return_value={"path": str(root / "instance"), "version": "1.21.1", "loader": "fabric"}):
+                mods = context.mods.list("survival")
+                self.assertEqual([(item.name, item.enabled) for item in mods], [("disabled.jar", False), ("example.jar", True)])
+                with self.assertRaises(ValueError):
+                    context.mods.remove("survival", "../outside.jar")
+                with patch("javbed.content_registry.remove"):
+                    self.assertTrue(context.mods.remove("survival", "example.jar").result(timeout=2))
+                self.assertFalse((folder / "example.jar").exists())
+            manager.shutdown()
+
+    def test_file_write_requires_permission_and_rejects_symlink(self):
+        plain = "from javbed_plugin_api import JavbedPlugin\ndef create_plugin(): return JavbedPlugin()\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root, permissions=["files.read", "files.write"], code=plain)
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.hello", approve=True)
+            context = PluginContext(manager, "com.example.hello", manager.records["com.example.hello"].logger)
+            target = root / "result.txt"
+            self.assertEqual(context.files.write_bytes(target, b"hello"), target.resolve())
+            self.assertEqual(context.files.read_bytes(target), b"hello")
+            if hasattr(Path, "symlink_to"):
+                link = root / "link.txt"
+                try:
+                    link.symlink_to(target)
+                except (OSError, NotImplementedError):
+                    pass
+                else:
+                    with self.assertRaises(ValueError):
+                        context.files.write_bytes(link, b"overwrite")
+            manager.shutdown()
+
     def test_manifest_validation_and_api_independence(self):
         item = PluginManifest.from_data(manifest())
         self.assertEqual(item.api_version, 1)

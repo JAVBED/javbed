@@ -8,6 +8,8 @@ KNOWN = frozenset({
     "servers.modify", "servers.console", "accounts.read", "files.read",
     "files.write", "network", "settings.read", "settings.write", "notifications",
     "deep_links", "process.launch",
+    "integrations", "server_providers", "importers", "diagnostics",
+    "java_tools", "metadata", "update_providers",
 })
 HIGH_RISK = frozenset({"files.write", "network", "servers.console", "process.launch", "accounts.read"})
 

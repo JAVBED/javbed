@@ -37,7 +37,7 @@ class CommandPalette(QDialog):
         self.base_actions.append((label, callback, keywords))
 
     def populate(self):
-        for name in ("Home", "Java", "Bedrock", "EDU", "LCE", "Dungeons", "Dungeons 2", "Legends", "Story Mode", "Worlds", "Servers", "Updates", "Activity", "Doctor", "Settings", "Plugins"):
+        for name in ("Home", "Java", "Bedrock", "EDU", "LCE", "Dungeons", "Dungeons 2", "Legends", "Story Mode", "Worlds", "Servers", "Extensions", "Updates", "Activity", "Doctor", "Settings", "Plugins"):
             self.add("Open " + name, lambda target=name: self.window.select_name(target))
         for command in self.window.plugin_manager.commands.all():
             self.add(command.title + (" — " + command.description if command.description else ""), lambda identifier=command.id: self.window.plugin_manager.commands.invoke(identifier), " ".join(command.keywords))
