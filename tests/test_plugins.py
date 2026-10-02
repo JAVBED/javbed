@@ -133,7 +133,7 @@ class PluginTests(unittest.TestCase):
             with patch("javbed.plugins.context.subprocess.Popen") as popen:
                 popen.return_value.pid = 123
                 self.assertEqual(context.process.launch(executable, "--version").result(timeout=2), 123)
-                self.assertEqual(popen.call_args.args[0], [str(executable), "--version"])
+                self.assertEqual(popen.call_args.args[0], [str(executable.resolve()), "--version"])
                 self.assertFalse(popen.call_args.kwargs["shell"])
             manager.shutdown()
 
@@ -170,7 +170,7 @@ class PluginTests(unittest.TestCase):
             manager.enable("com.example.hello", approve=True)
             context = PluginContext(manager, "com.example.hello", manager.records["com.example.hello"].logger)
             target = root / "result.txt"
-            self.assertEqual(context.files.write_bytes(target, b"hello"), target)
+            self.assertEqual(context.files.write_bytes(target, b"hello"), target.resolve())
             self.assertEqual(context.files.read_bytes(target), b"hello")
             if hasattr(Path, "symlink_to"):
                 link = root / "link.txt"
