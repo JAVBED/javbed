@@ -59,3 +59,22 @@ class DiagnosticResult:
     name: str
     state: str
     detail: str
+
+
+@dataclass(frozen=True)
+class GameInfo:
+    """A launchable entry supplied by a game integration."""
+    id: str
+    title: str
+    version: str = ""
+    status: str = "installed"
+
+
+@dataclass(frozen=True)
+class UpdateInfo:
+    """An update offered by a plugin update provider."""
+    id: str
+    title: str
+    installed_version: str
+    available_version: str
+    description: str = ""

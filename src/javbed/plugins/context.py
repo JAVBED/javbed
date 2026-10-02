@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .api import JAVBED_PLUGIN_API, InstanceInfo, ModInfo, ServerInfo, WorldInfo
+from .api import JAVBED_PLUGIN_API, GameInfo, InstanceInfo, ModInfo, ServerInfo, UpdateInfo, WorldInfo
 from .manifest import ID
 
 
@@ -171,28 +171,50 @@ class ServersFacade:
     def __init__(self, manager, owner):
         self.manager, self.owner = manager, owner
 
-    def list(self):
+    def list(self, provider=None):
         self.manager.require(self.owner, "servers.read")
         from javbed.servers import server_snapshot
-        return [ServerInfo(str(row["name"]), str(row.get("provider") or ""), str(row.get("minecraftVersion") or ""), bool(row.get("running")), int(row["port"]) if row.get("port") else None) for row in server_snapshot()]
+        result = [] if provider else [ServerInfo(str(row["name"]), str(row.get("provider") or ""), str(row.get("minecraftVersion") or ""), bool(row.get("running")), int(row["port"]) if row.get("port") else None) for row in server_snapshot()]
+        for item in self.manager.contributions.all("server_provider"):
+            if provider is not None and provider != item.id:
+                continue
+            if not item.handlers or "list" not in item.handlers:
+                continue
+            supplied = self.manager.contributions.invoke_handler(item, "list")
+            if supplied is None:
+                continue
+            if not isinstance(supplied, (list, tuple)) or any(not isinstance(row, ServerInfo) or row.provider != item.id for row in supplied):
+                self.manager._fail(item.owner, "server provider list", TypeError("Expected ServerInfo entries with provider ID"))
+                continue
+            result.extend(supplied)
+        return tuple(result)
 
-    def get(self, name):
-        return next((row for row in self.list() if row.name == name), None)
+    def get(self, name, provider=None):
+        return next((row for row in self.list(provider) if row.name == name), None)
 
-    def _run(self, permission, command, name, *args):
-        self.manager.require(self.owner, permission)
+    @staticmethod
+    def _validate_name(name):
         if not isinstance(name, str) or not name or len(name) > 100 or any(char in name for char in "/\\\x00\r\n"):
             raise ValueError("Invalid server name")
-        return self.manager.backend_future("Servers", command, name, *args)
 
-    def start(self, name): return self._run("servers.modify", "start", name)
-    def stop(self, name): return self._run("servers.modify", "stop", name)
-    def restart(self, name): return self._run("servers.modify", "restart", name)
-    def backup(self, name): return self._run("servers.modify", "backup", name)
-    def send_command(self, name, command):
+    def _run(self, permission, command, name, *args, provider=None):
+        self.manager.require(self.owner, permission)
+        self._validate_name(name)
+        if provider is not None:
+            item = self.manager.contributions.get(provider)
+            if not item or item.kind != "server_provider" or not item.handlers:
+                raise ValueError("Server provider unavailable")
+            return self.manager.submit_task(self.owner, lambda: self.manager.contributions.invoke_handler(item, command, name, *args))
+        return self.manager.backend_future("Servers", command if command != "send_command" else "send", name, *args)
+
+    def start(self, name, *, provider=None): return self._run("servers.modify", "start", name, provider=provider)
+    def stop(self, name, *, provider=None): return self._run("servers.modify", "stop", name, provider=provider)
+    def restart(self, name, *, provider=None): return self._run("servers.modify", "restart", name, provider=provider)
+    def backup(self, name, *, provider=None): return self._run("servers.modify", "backup", name, provider=provider)
+    def send_command(self, name, command, *, provider=None):
         if not isinstance(command, str) or not command.strip() or "\n" in command or "\r" in command:
             raise ValueError("Invalid console command")
-        return self._run("servers.console", "send", name, command)
+        return self._run("servers.console", "send_command", name, command, provider=provider)
 
 
 class AccountsFacade:
@@ -338,6 +360,101 @@ class ContributionsFacade:
         return self.manager.contributions.register(self.owner, self.kind, id=id, title=title, callback=callback)
 
 
+class IntegrationsFacade(ContributionsFacade):
+    def __init__(self, manager, owner):
+        super().__init__(manager, owner, "game", "integrations")
+
+    def register(self, *, id, title, callback=None, discover=None, launch=None):
+        self.manager.require(self.owner, "integrations")
+        if callback is not None:
+            if discover is not None or launch is not None:
+                raise ValueError("Use either callback or discover and launch")
+            return super().register(id=id, title=title, callback=callback)
+        if not callable(discover) or not callable(launch):
+            raise ValueError("Integration requires discover and launch callbacks")
+        return self.manager.contributions.register(self.owner, "game", id=id, title=title, callback=discover, handlers={"discover": discover, "launch": launch})
+
+    def list(self, integration_id):
+        self.manager.require(self.owner, "integrations")
+        item = self.manager.contributions.get(integration_id)
+        if not item or item.kind != "game" or not item.handlers:
+            raise ValueError("Game integration unavailable")
+        rows = self.manager.contributions.invoke_handler(item, "discover")
+        if rows is None:
+            return ()
+        if not isinstance(rows, (list, tuple)) or any(not isinstance(row, GameInfo) for row in rows):
+            self.manager._fail(item.owner, "game integration discover", TypeError("Expected GameInfo entries"))
+            return ()
+        return tuple(rows)
+
+    def launch(self, integration_id, game_id):
+        self.manager.require(self.owner, "integrations")
+        item = self.manager.contributions.get(integration_id)
+        if not item or item.kind != "game" or not item.handlers:
+            raise ValueError("Game integration unavailable")
+        if not isinstance(game_id, str) or not game_id or len(game_id) > 120:
+            raise ValueError("Invalid game ID")
+        return self.manager.submit_task(self.owner, lambda: self.manager.contributions.invoke_handler(item, "launch", game_id))
+
+
+class ServerProvidersFacade(ContributionsFacade):
+    def __init__(self, manager, owner):
+        super().__init__(manager, owner, "server_provider", "server_providers")
+
+    def register(self, *, id, title, callback=None, create=None, list=None, start=None, stop=None, restart=None, send_command=None, backup=None):
+        self.manager.require(self.owner, "server_providers")
+        if callback is not None:
+            if any(value is not None for value in (create, list, start, stop, restart, send_command, backup)):
+                raise ValueError("Use either callback or provider operations")
+            return super().register(id=id, title=title, callback=callback)
+        operations = {"create": create, "list": list, "start": start, "stop": stop, "restart": restart, "send_command": send_command, "backup": backup}
+        if any(not callable(value) for value in operations.values()):
+            raise ValueError("Server provider requires all operations")
+        for permission in ("servers.read", "servers.modify", "servers.console"):
+            self.manager.require(self.owner, permission)
+        return self.manager.contributions.register(self.owner, "server_provider", id=id, title=title, callback=create, handlers=operations)
+
+
+class UpdateProvidersFacade(ContributionsFacade):
+    def __init__(self, manager, owner):
+        super().__init__(manager, owner, "update_provider", "update_providers")
+
+    def register(self, *, id, title, callback=None, check=None, apply=None):
+        self.manager.require(self.owner, "update_providers")
+        self.manager.require(self.owner, "network")
+        if callback is not None:
+            if check is not None or apply is not None:
+                raise ValueError("Use either callback or check and apply")
+            return super().register(id=id, title=title, callback=callback)
+        if not callable(check) or not callable(apply):
+            raise ValueError("Update provider requires check and apply callbacks")
+        return self.manager.contributions.register(self.owner, "update_provider", id=id, title=title, callback=check, handlers={"check": check, "apply": apply})
+
+    def check(self, provider_id):
+        self.manager.require(self.owner, "update_providers")
+        self.manager.require(self.owner, "network")
+        item = self.manager.contributions.get(provider_id)
+        if not item or item.kind != "update_provider" or not item.handlers:
+            raise ValueError("Update provider unavailable")
+        rows = self.manager.contributions.invoke_handler(item, "check")
+        if rows is None:
+            return ()
+        if not isinstance(rows, (list, tuple)) or any(not isinstance(row, UpdateInfo) for row in rows):
+            self.manager._fail(item.owner, "update provider check", TypeError("Expected UpdateInfo entries"))
+            return ()
+        return tuple(rows)
+
+    def apply(self, provider_id, update_id):
+        self.manager.require(self.owner, "update_providers")
+        self.manager.require(self.owner, "network")
+        item = self.manager.contributions.get(provider_id)
+        if not item or item.kind != "update_provider" or not item.handlers:
+            raise ValueError("Update provider unavailable")
+        if not isinstance(update_id, str) or not update_id or len(update_id) > 120:
+            raise ValueError("Invalid update ID")
+        return self.manager.submit_task(self.owner, lambda: self.manager.contributions.invoke_handler(item, "apply", update_id))
+
+
 class ImportersFacade(ContributionsFacade):
     def __init__(self, manager, owner):
         super().__init__(manager, owner, "importer", "importers")
@@ -427,10 +544,36 @@ class DownloadsFacade:
 
 class PluginContext:
     api_version = JAVBED_PLUGIN_API
+    _capabilities = {
+        "commands": {"commands"}, "ui": {"ui"},
+        "instances": {"instances.read", "instances.modify", "instances.launch"},
+        "servers": {"servers.read", "servers.modify", "servers.console"},
+        "accounts": {"accounts.read"}, "worlds": {"worlds.read", "worlds.modify"},
+        "mods": {"mods.read", "mods.modify"}, "process": {"process.launch"},
+        "java": {"java_tools"}, "integrations": {"integrations"},
+        "server_providers": {"server_providers"}, "diagnostics": {"diagnostics"},
+        "metadata": {"metadata"}, "update_providers": {"update_providers"},
+        "importers": {"importers"}, "notifications": {"notifications"},
+        "files": {"files.read", "files.write"}, "deep_links": {"deep_links"},
+        "downloads": {"network"}, "settings": {"settings.read", "settings.write"},
+    }
+
+    def __getattribute__(self, name):
+        required = type(self)._capabilities.get(name)
+        if required:
+            granted = object.__getattribute__(self, "permissions")
+            if not required.intersection(granted):
+                raise PermissionError("Plugin capability not granted: " + name)
+        return object.__getattribute__(self, name)
+
+    @property
+    def permissions(self):
+        return self._permissions
 
     def __init__(self, manager, owner, logger):
         if not ID.fullmatch(owner):
             raise ValueError("Invalid plugin ID")
+        self._permissions = manager.records[owner].manifest.permissions.names
         (manager.data_root / owner).mkdir(parents=True, exist_ok=True)
         self.logger = logger
         self.paths = PluginPaths(manager.data_root / owner)
@@ -445,11 +588,11 @@ class PluginContext:
         self.process = ProcessFacade(manager, owner)
         self.java = JavaFacade(manager, owner)
         self.tasks = TasksFacade(manager, owner)
-        self.integrations = ContributionsFacade(manager, owner, "game", "integrations")
-        self.server_providers = ContributionsFacade(manager, owner, "server_provider", "server_providers")
+        self.integrations = IntegrationsFacade(manager, owner)
+        self.server_providers = ServerProvidersFacade(manager, owner)
         self.diagnostics = ContributionsFacade(manager, owner, "diagnostic", "diagnostics")
         self.metadata = ContributionsFacade(manager, owner, "metadata", "metadata")
-        self.update_providers = ContributionsFacade(manager, owner, "update_provider", "update_providers")
+        self.update_providers = UpdateProvidersFacade(manager, owner)
         self.importers = ImportersFacade(manager, owner)
         self.notifications = NotificationsFacade(manager, owner)
         self.files = FilesFacade(manager, owner)

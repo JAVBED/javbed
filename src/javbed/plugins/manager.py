@@ -31,7 +31,7 @@ from javbed.settings import ROOT
 from .api import JavbedPlugin
 from .context import PluginContext
 from .manifest import PluginManifest, compare, satisfies
-from .registries import CommandRegistry, ContributionRegistry, EventBus, RouteRegistry, UIRegistry
+from .registries import CommandRegistry, ContributionRegistry, EventBus, FileHandlerRegistry, RouteRegistry, UIRegistry
 
 
 class _Dispatcher(QObject):
@@ -95,7 +95,7 @@ class PluginManager:
         self.commands = CommandRegistry(self._fail)
         self.ui = UIRegistry(self._fail)
         self.contributions = ContributionRegistry(self._fail)
-        self.files = RouteRegistry(self._fail)
+        self.files = FileHandlerRegistry(self._fail)
         self.links = RouteRegistry(self._fail)
         self._state = self._read_state()
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="javbed-plugin")
@@ -372,6 +372,49 @@ class PluginManager:
         self.records[manifest.id] = PluginRecord(self.plugin_root / manifest.id, manifest, False, approved_permissions=approved)
         return self.records[manifest.id]
 
+    def update(self, source, *, approve=False):
+        """Replace and enable an installed plugin, restoring the old code on failure."""
+        from .packages import inspect
+        incoming = inspect(Path(source))
+        old = self.records.get(incoming.id)
+        if not old or not old.manifest:
+            raise ValueError("Plugin is not installed: " + incoming.id)
+        if compare(incoming.version, old.manifest.version) <= 0:
+            raise ValueError("Update must have a newer version")
+        old_state = self._state.get(incoming.id)
+        was_active = bool(old.plugin)
+        self.root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".plugin-rollback-", dir=self.root) as temporary:
+            backup = Path(temporary) / incoming.id
+            shutil.copytree(old.path, backup, symlinks=True)
+            replaced = False
+            try:
+                new = self.install(source, replace=True)
+                replaced = True
+                self.enable(new.id, approve=approve)
+                return new
+            except Exception:
+                if replaced:
+                    current = self.records.get(incoming.id)
+                    if current and current.plugin:
+                        self.disable(incoming.id, persist=False)
+                    target = self.plugin_root / incoming.id
+                    if target.is_symlink():
+                        raise ValueError("Unsafe plugin update destination during rollback")
+                    if target.exists():
+                        shutil.rmtree(target)
+                    os.replace(backup, target)
+                    old.status, old.error = "disabled", ""
+                    self.records[incoming.id] = old
+                    if old_state is None:
+                        self._state.pop(incoming.id, None)
+                    else:
+                        self._state[incoming.id] = old_state
+                    self._save_state()
+                    if was_active:
+                        self._load(old)
+                raise
+
     def uninstall(self, identifier):
         from .packages import uninstall
         dependents = [item.id for item in self.records.values() if item.plugin and item.manifest and identifier in item.manifest.dependencies and item.id != identifier]
@@ -405,6 +448,8 @@ class PluginManager:
     def shutdown(self):
         if self._closed:
             return
+        # Closing callbacks must finish before registrations and workers go away.
+        self.events.dispatch = None
         self.events.emit("javbed.closing")
         self._closed = True
         for task in list(self._downloads):
@@ -420,6 +465,9 @@ class PluginManager:
             self._notify = notify
         self._activity = activity
         self._run_command = run_command
+        dispatch = lambda owner, operation, callback: self.submit_task(owner, callback)
+        for registry in (self.events, self.commands, self.ui, self.links):
+            registry.dispatch = dispatch
 
     def notify(self, owner, title, message):
         self._dispatcher.post(lambda: self._notify(owner, title, message))

@@ -47,6 +47,7 @@ DEFAULTS = {
     "show_onboarding": True,
     "onboarding_complete": False,
     "developer_mode": False,
+    "notifications_enabled": True,
 }
 def load():
     data=dict(DEFAULTS)

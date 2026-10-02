@@ -82,13 +82,13 @@ Permissions are declared in the manifest and reviewed on enable. New permissions
 
 `files.write`, `network`, `servers.console`, `process.launch`, and `accounts.read` are marked high risk in the review dialog. Plugin code itself is unsandboxed Python. `accounts.read` returns only alias, username, and UUID from JAVBED's safe account reader; tokens and passwords are never passed through `PluginContext`.
 
-`context.api_version` is `1`. `context.logger` prefixes entries with the plugin ID. `context.paths.data` is the plugin's private data directory. `context.settings.get(key, default)` requires `settings.read`; `context.settings.set(key, JSON_value)` requires `settings.write` and saves to that plugin's own `settings.json`. `context.notifications.show(title=..., message=...)` requires `notifications`.
+`context.api_version` is `1`, and `context.permissions` is a read-only set of granted permission names. A capability facade is accessible only when at least one of its matching permissions was granted; individual methods enforce the exact permission they need. `context.logger` prefixes entries with the plugin ID. `context.paths.data` is the plugin's private data directory. `context.settings.get(key, default)` requires `settings.read`; `context.settings.set(key, JSON_value)` requires `settings.write` and saves to that plugin's own `settings.json`. `context.notifications.show(title=..., message=...)` requires `notifications` and respects the launcher's Notifications setting.
 
-`context.instances.list()` and `get(name)` return immutable `InstanceInfo` objects with name, version, loader, era, and path. They require `instances.read`. `launch`, `create`, `clone`, and `delete` require their corresponding launch or modify permission and return `Future[bool]` for backend success. Plugins do not need to parse JAVLI output. `open_folder(name)` opens the validated folder and returns its path. `context.servers.list()` and `get(name)` return immutable `ServerInfo` objects. `start`, `stop`, `restart`, `backup`, and `send_command` use SERVLI through JAVBED and return `Future[bool]`. `send_command` requires `servers.console`. `context.worlds.list()` returns `WorldInfo`; `backup(name, instance="")` and `restore(name, archive, instance="")` return futures. Synchronous list/get calls should be made from a background task when the underlying scan may be slow.
+`context.instances.list()` and `get(name)` return immutable `InstanceInfo` objects with name, version, loader, era, and path. They require `instances.read`. `launch`, `create`, `clone`, and `delete` require their corresponding launch or modify permission and return `Future[bool]` for backend success. Plugins do not need to parse JAVLI output. `open_folder(name)` opens the validated folder and returns its path. `context.servers.list(provider=None)` and `get(name, provider=None)` return immutable `ServerInfo` objects from SERVLI and enabled plugin providers. Pass a provider ID to select a plugin provider when names overlap. `start`, `stop`, `restart`, `backup`, and `send_command` accept `provider=...` and return futures. `servers.modify` or `servers.console` is required as appropriate. `context.worlds.list()` returns `WorldInfo`; `backup(name, instance="")` and `restore(name, archive, instance="")` return futures. Synchronous list/get calls should be made from a background task when the underlying scan may be slow.
 
 `context.mods.list(instance)` returns immutable `ModInfo` entries with instance, filename, path and enabled state. `install(instance, project, provider="modrinth")` delegates to JAVLI and returns a future. `remove(instance, filename)` removes one validated mod file and returns a future. These require `mods.read` and `mods.modify` respectively. `context.java.install_runtime(major)` delegates to JAVLI for Java 8, 17, 21, or 25. `context.process.launch(executable, *args)` requires the high risk `process.launch` permission, uses no shell, and returns a `Future[int]` with the process ID. On Windows it accepts `.exe` files only. `context.files.read_bytes(path)` and `write_bytes(path, data)` are capped at 64 MiB and require `files.read` and `files.write`. Plugins should keep ordinary data under `context.paths.data`.
 
-`context.tasks.run(callback, *args)` schedules blocking work on JAVBED's plugin worker pool and returns a future. Pending tasks are cancelled when the plugin disables; a running Python task cannot be forcibly stopped. Network work in lifecycle, event, command, and UI callbacks should be scheduled here or through `context.downloads`. Do not create or modify Qt widgets from a worker thread.
+`context.tasks.run(callback, *args)` schedules blocking work on JAVBED's plugin worker pool and returns a future. Pending tasks are cancelled when the plugin disables; a running Python task cannot be forcibly stopped. In the running launcher, event, command, deep-link, instance/server/world action, and provider callbacks run in a plugin worker. Page and settings widget factories run on the Qt main thread; they must be fast and must not perform network requests. `javbed.closing` callbacks run synchronously before workers stop. Do not create or modify Qt widgets from a worker thread; use Qt signals to cross to the UI thread.
 
 `context.downloads.download(url=..., destination=..., title=...)` requires `network`. A destination outside `context.paths.data` also requires `files.write`. HTTPS downloads appear in Downloads & Activity and return a `DownloadTask` with `.future` and `.cancel()`. Partial files are removed on failure or cancellation.
 
@@ -131,13 +131,13 @@ Commands appear in Ctrl+K and are removed on disable. IDs must be unique. Event 
 
 `register_context_action(target="instance" | "server" | "world", id=..., title=..., callback=...)` is an equivalent way to register a typed action. Registration IDs are unique within the UI registry.
 
-`context.files.register_handler(extension=".example", callback=...)` requires `files.read`. The callback receives a `Path` from a dropped local file. Extension conflicts between plugins are rejected. If a plugin handles a built-in extension, JAVBED asks the user which handler to use.
+`context.files.register_handler(extension=".example", callback=...)` requires `files.read`. The callback receives a `Path` from a dropped local file. If multiple plugins or JAVBED itself handle an extension, JAVBED asks the user which handler to use. A plugin cannot register the same extension twice.
 
 `context.deep_links.register(callback)` requires `deep_links`. Links have the form `javbed://plugin/<plugin-id>/<route>` and the callback receives the decoded route string. Core routes cannot be overridden; unsafe or oversized links are rejected.
 
 ## Integration and provider extensions
 
-The **Extensions** sidebar page shows enabled plugin games, server providers, Java tools, and update providers. The host runs their callbacks in a worker. A plugin can register:
+The **Extensions** sidebar page shows enabled plugin games, server providers, importers, Java tools, and update providers. The host runs their callbacks in a worker. The simple callback registrations remain available:
 
 ```python
 from javbed_plugin_api import DiagnosticResult
@@ -151,7 +151,27 @@ context.update_providers.register(id="example.updates", title="Example updates",
 context.importers.register(id="example.import", title="Example import", extension=".example", callback=import_file)
 ```
 
-The `launch_game()` and Java tool callbacks take no arguments. `create_server(name: str, minecraft_version: str)` receives validated text. Diagnostic callbacks return `DiagnosticResult(name, state, detail)`, where state is `healthy`, `warning`, or `failed`; results appear in **Doctor**. Metadata callbacks receive `InstanceInfo` and return `dict[str, str]`; users find them in the instance menu. Update provider callbacks return a short status string on user action; they never silently install an update. Importer callbacks receive a local `Path` from drag and drop. Built-in file extensions prompt for handler choice. All these registrations are removed when the owner disables or reloads.
+The `launch_game()` and Java tool callbacks take no arguments. `create_server(name: str, minecraft_version: str)` receives validated text. Diagnostic callbacks return `DiagnosticResult(name, state, detail)`, where state is `healthy`, `warning`, or `failed`; results appear in **Doctor**. Metadata callbacks receive `InstanceInfo` and return `dict[str, str]`; users find them in the instance menu. Simple update provider callbacks return a short status string on user action. Importer callbacks receive a local `Path` from drag and drop or the Extensions file picker. All registrations are removed when the owner disables or reloads.
+
+For a browsable game integration, use the structured form. `GameInfo` is imported from `javbed_plugin_api`; `discover()` returns a list or tuple of these immutable entries and `launch(game_id)` receives the selected ID:
+
+```python
+from javbed_plugin_api import GameInfo
+
+context.integrations.register(
+    id="example.games", title="Example games",
+    discover=lambda: [GameInfo("game-one", "Game One", "1.0")],
+    launch=lambda game_id: launch_game(game_id),
+)
+```
+
+`context.integrations.list("example.games")` returns the typed entries, and `context.integrations.launch("example.games", "game-one")` returns a future. Discover and launch callbacks run on a worker when invoked through the Extensions page.
+
+A structured server provider registers seven operations: `create(name, version)`, `list()`, `start(name)`, `stop(name)`, `restart(name)`, `send_command(name, command)`, and `backup(name)`. `list()` returns `ServerInfo` entries whose `provider` equals the registered provider ID. JAVBED offers these actions in Extensions and exposes them through `context.servers` with an explicit provider ID. Providers must validate names and commands against their own service. Registration requires `server_providers`, `servers.read`, `servers.modify`, and `servers.console`, so users see the high-risk console permission during approval. Callers need the matching `servers.*` permission to use the wrapper.
+
+For structured updates, `context.update_providers.register(id=..., title=..., check=..., apply=...)` takes a `check()` callback returning `UpdateInfo(id, title, installed_version, available_version, description="")` entries. `apply(update_id)` runs only after a user chooses an update and confirms it in Extensions. The wrapper also offers `check(provider_id)` and `apply(provider_id, update_id)`, with the latter returning a future. Both require `update_providers` and `network`. A plugin that applies updates to arbitrary files must also request `files.write` and use the file or download API accordingly. JAVBED never silently applies these updates.
+
+Plugin Manager's GitHub Releases update flow stages the previous plugin and restores it if the new version fails to enable. Updates are never automatic.
 
 Each registration requires its matching permission. Importers also require `files.read`; update providers also require `network`; metadata providers also require `instances.read`. Server providers appear in the Servers creation selector as well as Extensions. To create a server through SERVLI, a plugin can use `context.servers` with its corresponding permission, or implement its own provider in the registered callback. To launch an external game process, request `process.launch` and use `context.process.launch`. These callbacks must handle their own provider-specific validation. The extensions are intentional entry points; JAVBED does not grant plugins its `MainWindow` or mutable internal state.
 
