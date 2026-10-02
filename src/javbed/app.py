@@ -32,6 +32,8 @@ from .storymode import DOWNLOAD_URLS, DownloadCancelled, detect_game as detect_s
 from .theme import STYLE, stylesheet
 from .shell_widgets import AccountHeader, InstallationFrame, StatusLabel, game_icon, sidebar_button
 from . import __version__
+from .plugins.manager import PluginManager
+from .plugins.ui import PluginManagerPage
 
 EXTRA_GAMES={
 "Dungeons":(("MinecraftDungeons.exe","Dungeons.exe"),"Minecraft Dungeons"),
@@ -406,8 +408,11 @@ class StoryModePage(QWidget):
         self.progress.setRange(0,100);self.progress.setValue(0);self.progress.show();self.cancel_download.show()
         self.state.setText("Downloading " + title + "...")
         job=DownloadJob(url,destination);self.download_job=job
+        manager=getattr(self.window(),"plugin_manager",None)
+        if manager:manager.events.emit("download.started",title=title,destination=str(destination))
         activity_id=self.activity.begin(title+" ISO",url,"Downloading",job.cancelled.set) if self.activity else None
         def on_progress(received,total):
+            if manager:manager.events.emit("download.progress",title=title,received=received,total=total)
             if activity_id:self.activity.progress(activity_id,received,total,"Downloading")
             if total:
                 percent=min(100,received*100//total)
@@ -417,6 +422,7 @@ class StoryModePage(QWidget):
                 self.progress.setRange(0,0)
                 self.state.setText(f"Downloading {title}: {received//(1024*1024)} MB")
         def on_done(ok,message):
+            if manager:manager.events.emit("download.completed" if ok else "download.failed",title=title,destination=str(destination),message=message)
             if activity_id:self.activity.finish(activity_id,ok,"Downloaded" if ok else message[:180])
             self.download.setEnabled(True);self.season.setEnabled(True);self.progress.hide();self.cancel_download.hide();self.cancel_download.setEnabled(True);self.download_job=None
             self.state.setText(("Downloaded " + destination.name if ok else "Download failed: " + message[:140]))
@@ -1042,6 +1048,12 @@ class GamePage(QWidget):
                 self.run(["java", "install", str(major)], target=target, finished=installed)
                 return
         if not quiet:(target or self.output).clear()
+        manager=getattr(self.window(),"plugin_manager",None)
+        launching=bool(args) and (args[0] in ("launch","release","snapshot","beta","alpha") or args[:2]==["instance","launch"])
+        if manager and launching:
+            manager.events.emit("game.launching",game=self.label,instance=args[2] if args[:2]==["instance","launch"] and len(args)>2 else "")
+            if args[:2]==["instance","launch"] and len(args)>2:
+                manager.events.emit("instance.launching",name=args[2])
         proc=QProcess(self);self.proc=proc;proc.setProgram(cmd[0]);proc.setArguments(cmd[1:]);proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels);chunks=[]
         tracked_action = bool(args) and (args[0] in ("mods", "modpack", "resourcepack", "shader", "java") and len(args)>1 and args[1] in ("install", "update") or args[0] in ("create", "update", "backup") or args[:2] == ["instance", "create"])
         activity_id = self.activity.begin(" ".join(args[:3]), self.label, "Running backend", None) if self.activity and tracked_action else None
@@ -1078,15 +1090,29 @@ class GamePage(QWidget):
                                 try:diagnosis = diagnose(Path(str(info["path"])) / "minecraft", started, exit_code)
                                 except OSError:pass
                             self.game_ended.emit(instance, {"diagnosis": diagnosis, "restore_error": restore_error})
+                            if manager:
+                                manager._dispatcher.post(lambda:manager.events.emit("game.crashed" if diagnosis else "game.exited",game=self.label,instance=instance,exit_code=exit_code))
+                                if instance:manager._dispatcher.post(lambda:manager.events.emit("instance.exited",name=instance,exit_code=exit_code))
                         if instance in self.safe_mode_active:
                             try:safemode.set_pid(instance, int(match.group(1)))
                             except Exception as exc:self.status.setText("Safe Mode journal error: " + str(exc))
                         watched = history.watch_pid(int(match.group(1)), self.label, instance=instance, version=version, channel=channel, loader=loader, on_exit=exited)
                         if watched and hasattr(self.window(),"on_game_launched"):
                             self.window().on_game_launched()
+                            if manager:
+                                manager.events.emit("game.started",game=self.label,instance=instance,pid=int(match.group(1)))
+                                if instance:manager.events.emit("instance.started",name=instance,pid=int(match.group(1)))
                         if not watched and instance in self.safe_mode_active:
                             self.pool.start(Job(lambda: safemode.restore(instance)))
                             self.safe_mode_active.discard(instance)
+            if manager and code==0 and self.label=="Java" and len(args)>2 and args[0]=="instance" and args[1] in ("create","set","delete"):
+                manager.events.emit({"create":"instance.created","set":"instance.updated","delete":"instance.deleted"}[args[1]],name=args[2])
+            if manager and code==0 and self.label=="Servers" and args:
+                event={"create":"server.created","start":"server.started","stop":"server.stopped","backup":"server.backup_completed"}.get(args[0])
+                if event:manager.events.emit(event,name=args[1] if len(args)>1 else "")
+            if manager and code==0 and len(args)>1 and args[0] in ("mods","mod"):
+                event={"install":"mod.installed","remove":"mod.removed","update":"mod.updated"}.get(args[1])
+                if event:manager.events.emit(event,instance=args[2] if len(args)>2 else "")
             if capture=="versions" and hasattr(self,"version"):
                 vals=[]
                 for line in "".join(chunks).splitlines():vals+=re.findall(r"(?<!\w)(?:[cbra]?\d+(?:\.\d+){1,3}(?:[-._][\w.-]+)?|latest)(?!\w)",line,re.I)
@@ -1304,6 +1330,7 @@ class SettingsPage(QWidget):
         accent_row=QHBoxLayout();accent_row.addWidget(self.accent);accent_row.addWidget(accent_button)
         self.compact_nav=QCheckBox();self.compact_nav.setChecked(bool(self.data.get("compact_navigation",False)))
         self.show_artwork=QCheckBox();self.show_artwork.setChecked(bool(self.data.get("show_artwork",True)))
+        self.developer_mode=QCheckBox();self.developer_mode.setChecked(bool(self.data.get("developer_mode",False)))
         self.startup=QComboBox();self.startup.addItems(["Home","Java","Servers","Worlds","Updates"]);self.startup.setCurrentText(str(self.data.get("startup_page","Home")))
         def heading(text):
             label=QLabel(text);label.setObjectName("game");form.addRow(label)
@@ -1321,7 +1348,9 @@ class SettingsPage(QWidget):
         heading("APPEARANCE")
         form.addRow("Theme",self.theme_choice);form.addRow("Accent color",accent_row);form.addRow("Compact navigation",self.compact_nav);form.addRow("Show artwork",self.show_artwork)
         heading("ADVANCED")
+        form.addRow("Developer mode",self.developer_mode)
         form.addRow("Bedrock worlds folder",self.bedrock_worlds);form.addRow("EDU worlds folder",self.edu_worlds)
+        plugins_button=QPushButton("OPEN PLUGINS");plugins_button.setObjectName("secondary");plugins_button.clicked.connect(lambda:self.window().select_name("Plugins"));form.addRow(plugins_button)
         form.addRow("Data folder",QLabel(str(settings_module.ROOT)))
         doctor_button=QPushButton("OPEN DIAGNOSTICS");doctor_button.setObjectName("secondary");doctor_button.clicked.connect(lambda:self.window().select_name("Doctor"));form.addRow(doctor_button)
         from PySide6.QtWidgets import QScrollArea
@@ -1347,11 +1376,13 @@ class SettingsPage(QWidget):
         self.data=load_settings()
         self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"minimize_on_launch":self.minimize_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip(),"bedrock_worlds_path":self.bedrock_worlds.text().strip(),"edu_worlds_path":self.edu_worlds.text().strip(),"servli_home":self.servli_home.text().strip(),"server_backup_mode":self.backup_mode.currentText(),"server_backup_keep":self.backup_keep.value()})
         for key, field in self.engine_fields.items(): self.data[key]=field.text().strip()
-        self.data.update({"theme":self.theme_choice.currentData(),"accent_color":self.accent.text().strip(),"compact_navigation":self.compact_nav.isChecked(),"show_artwork":self.show_artwork.isChecked(),"startup_page":self.startup.currentText()})
+        self.data.update({"theme":self.theme_choice.currentData(),"accent_color":self.accent.text().strip(),"compact_navigation":self.compact_nav.isChecked(),"show_artwork":self.show_artwork.isChecked(),"startup_page":self.startup.currentText(),"developer_mode":self.developer_mode.isChecked()})
         save_settings(self.data); apply_environment(self.data)
         app=QApplication.instance()
         if app:app.setStyleSheet(stylesheet(self.data))
         for hero in self.window().findChildren(HeroArt):hero.apply_preference()
+        if hasattr(self.window(),"plugin_page"):
+            self.window().plugin_page.developer_mode=self.developer_mode.isChecked();self.window().plugin_page.refresh()
         self.status.setText("Settings saved.")
     def open_data(self):
         from .settings import ROOT
@@ -1361,8 +1392,9 @@ class SettingsPage(QWidget):
         else: subprocess.Popen(["xdg-open",str(ROOT)])
 
 class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__();self.activity=ActivityManager(self);self.notifications=NotificationCenter(self);self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620);self.setAcceptDrops(True)
+    def __init__(self, plugin_manager=None):
+        super().__init__();self.plugin_manager=plugin_manager or PluginManager(safe_mode=True);self.activity=ActivityManager(self);self.notifications=NotificationCenter(self);self.setWindowTitle("JAVBED Launcher");self.resize(1280,750);self.setMinimumSize(1000,620);self.setAcceptDrops(True)
+        self.plugin_manager.attach(notify=lambda owner,title,message:self.notifications.post("plugin:"+owner+":"+title,title+": "+message,0),activity=self.activity,run_command=lambda engine,args,finished:(self.java_page if engine=="Java" else self.server_page).run(list(args),finished=finished))
         self.notifications.posted.connect(self.show_notice)
         self.activity.finished.connect(lambda item,ok,message:self.notifications.post("activity:"+item, (item+": "+message) if ok else (item+" failed: "+message)) if ok or message else None)
         self.tray=None
@@ -1376,13 +1408,15 @@ class MainWindow(QMainWindow):
         nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         nav_scroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: #312d2c; border: 0; }")
-        nav_content=QWidget();nav_layout=QVBoxLayout(nav_content);nav_layout.setContentsMargins(0,0,0,0);nav_layout.setSpacing(0)
+        nav_content=QWidget();nav_layout=QVBoxLayout(nav_content);self.nav_layout=nav_layout;nav_layout.setContentsMargins(0,0,0,0);nav_layout.setSpacing(0)
         nav_scroll.setWidget(nav_content);r.addWidget(nav_scroll,1)
         self.stack=QStackedWidget();self.buttons=[];self.pages=[]
         self.palette_shortcut=QShortcut(QKeySequence("Ctrl+K"),self);self.palette_shortcut.activated.connect(self.open_palette)
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Activity","Doctor","Settings")
+        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Activity","Doctor","Settings","Plugins")
+        self.entries=list(entries)
+        self.plugin_pages={}
         for i,label in enumerate(entries):
-            if label in ("Updates","Activity","Doctor","Settings"):
+            if label in ("Updates","Activity","Doctor","Settings","Plugins"):
                 b=None
             else:
                 display={"Home":"HOME","Java":"MINECRAFT:\nJAVA EDITION","Bedrock":"MINECRAFT:\nBEDROCK EDITION","EDU":"MINECRAFT\nEDUCATION","LCE":"MINECRAFT\nLEGACY CONSOLE","Dungeons":"MINECRAFT\nDUNGEONS","Dungeons 2":"MINECRAFT\nDUNGEONS II","Legends":"MINECRAFT\nLEGENDS","Story Mode":"MINECRAFT\nSTORY MODE","Worlds":"WORLDS","Servers":"SERVERS"}[label]
@@ -1402,6 +1436,8 @@ class MainWindow(QMainWindow):
                 page = DoctorPage(self.activity)
             elif label == "Settings":
                 page = SettingsPage()
+            elif label == "Plugins":
+                page = PluginManagerPage(self.plugin_manager,developer_mode=bool(load_settings().get("developer_mode",False)),parent=self);self.plugin_page=page
             elif label == "Updates":
                 page = UpdatesPage(self.activity, self)
             elif label in EXTRA_GAMES:
@@ -1412,7 +1448,7 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
             if label=="Java":self.java_page=page
             if label=="Servers":self.server_page=page
-            if label=="Servers":page.server_dashboard.unexpected_stop.connect(lambda name:self.notifications.post("server-stopped:"+name,"Server "+name+" stopped unexpectedly"))
+            if label=="Servers":page.server_dashboard.unexpected_stop.connect(lambda name:(self.notifications.post("server-stopped:"+name,"Server "+name+" stopped unexpectedly"),self.plugin_manager.events.emit("server.crashed",name=name)))
             if label=="Java":page.game_ended.connect(lambda name,result:self.notifications.post("crash:"+name,"Crash detected in "+name) if result.get("diagnosis") else None)
             if label=="Worlds":page.completed.connect(lambda action:self.notifications.post("world:"+action,"World "+action.lower().removesuffix("...")+" completed") if action.startswith(("Backing up","Restoring","Importing","Exporting")) else None)
             if label=="Story Mode":self.story_page=page
@@ -1435,6 +1471,7 @@ class MainWindow(QMainWindow):
         more_menu=QMenu(more)
         more_menu.addAction("Activity",lambda:self.select_name("Activity"))
         more_menu.addAction("Doctor",lambda:self.select_name("Doctor"))
+        more_menu.addAction("Plugins",lambda:self.select_name("Plugins"))
         more.clicked.connect(lambda:more_menu.exec(more.mapToGlobal(more.rect().topRight())))
         settings_layout.addWidget(more)
         bottom_layout.addWidget(settings_row)
@@ -1453,6 +1490,7 @@ class MainWindow(QMainWindow):
         self.toast.hide()
         startup=str(load_settings().get("startup_page") or "Home")
         self.select(entries.index(startup) if startup in entries else 0)
+        self.plugin_manager.ui.changed=self.sync_plugin_pages
         QTimer.singleShot(300,self.refresh_all);QTimer.singleShot(500,self.recover_safe_modes)
         QTimer.singleShot(1200,self.maybe_onboard)
         QTimer.singleShot(5000,self.auto_check_updates)
@@ -1530,18 +1568,60 @@ class MainWindow(QMainWindow):
         self.java_page.run(["account", "use", alias], target=self.java_page.account_output)
         if self.java_page.proc:
             self.java_page.proc.finished.connect(lambda *_: self.pages[0].refresh())
+            self.java_page.proc.finished.connect(lambda code,*_: self.plugin_manager.events.emit("account.changed",alias=alias) if code==0 else None)
     def refresh_active_account(self):
         self.java_page.run(["account", "refresh"], target=self.java_page.account_output)
         if self.java_page.proc:
             self.java_page.proc.finished.connect(lambda *_: self.pages[0].refresh())
     def refresh_all(self):
+        if not self.isVisible():return
         for p in self.pages:
             if isinstance(p,GamePage):p.startup_refresh()
             elif isinstance(p,ExtraPage):p.refresh()
     def select_name(self,name):
-        entries=("Home","Java","Bedrock","EDU","LCE","Dungeons","Dungeons 2","Legends","Story Mode","Worlds","Servers","Updates","Activity","Doctor","Settings")
-        if name in entries:self.select(entries.index(name))
+        if name in self.entries:self.select(self.entries.index(name))
+    def sync_plugin_pages(self):
+        if not hasattr(self,"stack") or not hasattr(self,"nav_layout"):
+            return
+        registered={item.id:item for item in self.plugin_manager.ui.all("page")}
+        for identifier,(button,page) in list(self.plugin_pages.items()):
+            if identifier not in registered:
+                if self.stack.currentWidget() is page:
+                    self.select_name("Home")
+                index=self.entries.index("plugin:"+identifier)
+                self.stack.removeWidget(page);page.deleteLater();button.deleteLater()
+                self.entries.pop(index);self.pages.pop(index);self.buttons.pop(index)
+                del self.plugin_pages[identifier]
+        for identifier,item in registered.items():
+            if identifier in self.plugin_pages:
+                continue
+            widget=self.plugin_manager.ui.invoke(item)
+            if widget is None:
+                continue
+            if not isinstance(widget,QWidget):
+                self.plugin_manager._fail(item.owner,"page widget",TypeError("Factory must return QWidget"))
+                continue
+            label="plugin:"+identifier
+            button=sidebar_button(item.title.upper(),label)
+            button.clicked.connect(lambda checked=False,target=label:self.select_name(target))
+            self.nav_layout.insertWidget(self.nav_layout.count()-1,button)
+            self.stack.addWidget(widget);self.entries.append(label);self.pages.append(widget);self.buttons.append(button)
+            self.plugin_pages[identifier]=(button,widget)
+        if hasattr(self,"plugin_page"):
+            self.plugin_page.refresh()
     def open_deep_link(self, uri):
+        from urllib.parse import unquote, urlparse
+        from .plugins.manifest import ID
+        parsed=urlparse(uri)
+        if parsed.scheme.lower()=="javbed" and parsed.netloc.lower()=="plugin":
+            parts=parsed.path.strip("/").split("/",1)
+            owner=parts[0] if parts else ""
+            route=unquote(parts[1]) if len(parts)>1 else ""
+            if len(uri)>2048 or not ID.fullmatch(owner) or parsed.query or parsed.fragment or "\\" in route or "\x00" in route or any(part in (".","..") for part in route.split("/")):
+                self.show_notice("Invalid plugin link")
+            elif not self.plugin_manager.links.invoke(owner,route):
+                self.show_notice("Plugin link is unavailable")
+            return
         try:
             link=parse_deep_link(uri)
         except ValueError as exc:
@@ -1583,7 +1663,7 @@ class MainWindow(QMainWindow):
             else:
                 page.run([page.version.currentText().strip()])
     def dragEnterEvent(self, event):
-        supported = {".jar", ".mrpack", ".zip", ".iso"}
+        supported = {".jar", ".mrpack", ".zip", ".iso"} | set(self.plugin_manager.files._items)
         if event.mimeData().hasUrls() and any(Path(url.toLocalFile()).suffix.lower() in supported for url in event.mimeData().urls() if url.isLocalFile()):
             event.acceptProposedAction()
 
@@ -1597,6 +1677,16 @@ class MainWindow(QMainWindow):
         if not source.is_file():
             return
         suffix = source.suffix.lower()
+        handler=self.plugin_manager.files.owners(suffix)
+        if handler:
+            builtin=suffix in {".jar",".mrpack",".zip",".iso"}
+            if builtin:
+                choice,ok=QInputDialog.getItem(self,"Open file",source.name+" can be handled by:",["JAVBED",handler[0]],0,False)
+                if not ok:return
+                if choice!="JAVBED":
+                    self.plugin_manager.files.invoke(suffix,source);return
+            else:
+                self.plugin_manager.files.invoke(suffix,source);return
         if suffix == ".mrpack":
             self.select_name("Java")
             self.java_page.switch_view("modpacks")
@@ -1652,6 +1742,7 @@ class MainWindow(QMainWindow):
         if i == 0 and self.pages:
             self.pages[0].refresh()
     def closeEvent(self,event):
+        self.plugin_manager.shutdown()
         if hasattr(self,"story_page") and self.story_page.download_job:
             self.story_page.download_job.cancelled.set()
         for process in self.findChildren(QProcess):
@@ -1662,11 +1753,36 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 def main():
-    app=QApplication(sys.argv[:1]);app.setApplicationName("JAVBED");app.setStyleSheet(stylesheet(load_settings()));apply_environment(load_settings());w=MainWindow();w.show()
+    app=QApplication(sys.argv[:1]);app.setApplicationName("JAVBED");app.setStyleSheet(stylesheet(load_settings()));apply_environment(load_settings())
+    safe_mode="--safe-mode" in sys.argv[1:] or bool(app.keyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+    manager=PluginManager(safe_mode=safe_mode)
+    manager.discover()
+    startup_marker=settings_module.ROOT/"plugin-startup.marker"
+    if not safe_mode and startup_marker.is_file() and any(record.enabled for record in manager.records.values()):
+        from PySide6.QtWidgets import QMessageBox
+        try:count=int(startup_marker.read_text(encoding="utf-8"))+1
+        except (OSError,ValueError):count=2
+        if count>=2 and QMessageBox.question(None,"Plugin startup recovery","JAVBED may have stopped while loading plugins. START WITHOUT PLUGINS for this session?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No)==QMessageBox.StandardButton.Yes:
+            manager.safe_mode=True
+    w=MainWindow(manager);w.show()
+    def start_plugins():
+        if not manager.safe_mode:
+            startup_marker.parent.mkdir(parents=True,exist_ok=True)
+            try:
+                previous=int(startup_marker.read_text(encoding="utf-8")) if startup_marker.is_file() else 0
+            except (OSError,ValueError):previous=0
+            startup_marker.write_text(str(previous+1),encoding="utf-8")
+            manager.load_enabled()
+            w.sync_plugin_pages()
+        manager.events.emit("javbed.started")
+        w.plugin_page.refresh()
+        startup_marker.unlink(missing_ok=True)
+    QTimer.singleShot(0,start_plugins)
     if sys.platform == "win32" and getattr(sys, "frozen", False):
         try:register_windows(sys.executable)
         except OSError:pass
-    if len(sys.argv)>1 and sys.argv[1].lower().startswith("javbed://"):
-        QTimer.singleShot(0,lambda:w.open_deep_link(sys.argv[1]))
+    for argument in sys.argv[1:]:
+        if argument.lower().startswith("javbed://"):
+            QTimer.singleShot(0,lambda uri=argument:w.open_deep_link(uri))
     raise SystemExit(app.exec())
 if __name__=="__main__":main()

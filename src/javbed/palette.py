@@ -33,12 +33,14 @@ class CommandPalette(QDialog):
         self.refresh()
         QTimer.singleShot(0, self.query.setFocus)
 
-    def add(self, label, callback):
-        self.base_actions.append((label, callback))
+    def add(self, label, callback, keywords=""):
+        self.base_actions.append((label, callback, keywords))
 
     def populate(self):
-        for name in ("Home", "Java", "Bedrock", "EDU", "LCE", "Dungeons", "Dungeons 2", "Legends", "Story Mode", "Worlds", "Servers", "Updates", "Activity", "Doctor", "Settings"):
+        for name in ("Home", "Java", "Bedrock", "EDU", "LCE", "Dungeons", "Dungeons 2", "Legends", "Story Mode", "Worlds", "Servers", "Updates", "Activity", "Doctor", "Settings", "Plugins"):
             self.add("Open " + name, lambda target=name: self.window.select_name(target))
+        for command in self.window.plugin_manager.commands.all():
+            self.add(command.title + (" — " + command.description if command.description else ""), lambda identifier=command.id: self.window.plugin_manager.commands.invoke(identifier), " ".join(command.keywords))
         for item in list_instances():
             name = str(item["name"])
             self.add("Launch " + name, lambda target=name: self.window.java_page.run(["instance", "launch", target]))
@@ -94,7 +96,7 @@ class CommandPalette(QDialog):
     def refresh(self):
         query = self.query.text().strip()
         lowered = query.lower()
-        self.actions = [(label, action) for label, action in self.base_actions if lowered in label.lower()]
+        self.actions = [(label, action) for label, action, keywords in self.base_actions if lowered in (label + " " + keywords).lower()]
         if query:
             self.actions.insert(0, ("Search Modrinth for " + query, lambda value=query: self.search_mods(value)))
             self.actions.insert(1, ("Search modpacks for " + query, lambda value=query: self.search_packs(value)))

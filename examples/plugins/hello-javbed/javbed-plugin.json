@@ -1,0 +1,22 @@
+{
+  "manifest_version": 1,
+  "api_version": 1,
+  "id": "com.example.hello-javbed",
+  "name": "Hello JAVBED",
+  "version": "1.0.0",
+  "description": "Demonstrates a command, page, event, settings, logging, and notifications.",
+  "author": "JAVBED Example",
+  "homepage": "https://github.com/JAVBED/javbed",
+  "entrypoint": "plugin.py",
+  "javbed": {
+    "minimum_version": "0.1.0",
+    "maximum_version": null
+  },
+  "permissions": [
+    "ui",
+    "commands",
+    "settings.read",
+    "settings.write",
+    "notifications"
+  ]
+}

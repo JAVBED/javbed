@@ -9,6 +9,7 @@ import stat
 import tarfile
 import tempfile
 import urllib.request
+import uuid
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -75,7 +76,12 @@ class Engine:
             on_path = shutil.which(self.binary + ".exe")
         if on_path and Path(on_path).is_file():
             return Path(on_path)
-        return self.executable if self.executable.is_file() else None
+        if self.executable.is_file():
+            return self.executable
+        # A process can stop between moving the old release aside and switching
+        # in the new one. Keep that complete previous release launchable.
+        backups = sorted(ENGINE_ROOT.glob(f".{self.project}-backup-*"), key=lambda path: path.stat().st_mtime, reverse=True) if ENGINE_ROOT.is_dir() else []
+        return next((path / self.executable.name for path in backups if (path / self.executable.name).is_file()), None)
 
     def command(self, *args):
         exe = self.locate()
@@ -86,7 +92,6 @@ class Engine:
         return [str(exe), *args], None
 
     def install_latest(self, progress=None, download_progress=None):
-        self.directory.mkdir(parents=True, exist_ok=True)
         req = urllib.request.Request(API.format(repo=self.project), headers={"Accept": "application/vnd.github+json", "User-Agent": "JAVBED"})
         with urllib.request.urlopen(req, timeout=30) as response:
             release = json.load(response)
@@ -134,19 +139,43 @@ class Engine:
             found = next((p for p in staging.rglob("*") if p.is_file() and p.name.lower() in expected), None)
             if not found:
                 raise RuntimeError(f"Downloaded release but could not find {self.binary} executable.")
-            for source in staging.rglob("*"):
-                target = self.directory / source.relative_to(staging)
-                if source.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                elif source != found:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, target)
-            replacement = self.executable.with_name(self.executable.name + ".new")
-            shutil.copy2(found, replacement)
-            if platform.system() != "Windows":
-                replacement.chmod(replacement.stat().st_mode | stat.S_IEXEC)
-            os.replace(replacement, self.executable)
-        (self.directory / "release.json").write_text(json.dumps({"tag": release.get("tag_name"), "asset": name}, indent=2), encoding="utf-8")
+            ENGINE_ROOT.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=f".{self.project}-", dir=ENGINE_ROOT) as ready_root:
+                ready = Path(ready_root) / "ready"
+                ready.mkdir()
+                for source in staging.rglob("*"):
+                    target = ready / source.relative_to(staging)
+                    if source.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    elif source != found:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(source, target)
+                executable = ready / self.executable.name
+                shutil.copy2(found, executable)
+                if platform.system() != "Windows":
+                    executable.chmod(executable.stat().st_mode | stat.S_IEXEC)
+                (ready / "release.json").write_text(
+                    json.dumps({"tag": release.get("tag_name"), "asset": name}, indent=2), encoding="utf-8"
+                )
+
+                backup = ENGINE_ROOT / f".{self.project}-backup-{uuid.uuid4().hex}"
+                had_previous = self.directory.exists()
+                if had_previous:
+                    os.replace(self.directory, backup)
+                try:
+                    os.replace(ready, self.directory)
+                except Exception:
+                    if had_previous:
+                        try:
+                            os.replace(backup, self.directory)
+                        except Exception as rollback_error:
+                            raise RuntimeError(f"Engine install failed; previous release remains at {backup}") from rollback_error
+                    raise
+                if had_previous:
+                    try:
+                        shutil.rmtree(backup)
+                    except OSError:
+                        pass  # A complete, usable copy remains at this backup path.
         return release.get("tag_name") or "latest"
 
 ENGINES = {

@@ -242,6 +242,12 @@ class ServerDashboard(QWidget):
                 content.addWidget(button)
             content.addWidget(self.button("CONSOLE", lambda checked=False, item=row: self.open_server(item, "Console")))
             content.addWidget(self.button("SETTINGS", lambda checked=False, item=row: self.open_server(item, "Properties")))
+            manager=getattr(self.window(),"plugin_manager",None)
+            if manager:
+                from .plugins.api import ServerInfo
+                info=ServerInfo(str(row["name"]),str(row.get("provider") or ""),str(row.get("minecraftVersion") or ""),bool(row.get("running")),int(row["port"]) if row.get("port") else None)
+                for action in manager.ui.all("server_action"):
+                    content.addWidget(self.button(action.title,lambda checked=False,entry=action,value=info:manager.ui.invoke(entry,value)))
             self.cards.insertWidget(self.cards.count() - 1, frame)
 
     def command(self, args, after=None):

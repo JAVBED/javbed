@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, urllib.request, webbrowser
+import json, os, re, urllib.request, webbrowser
 from pathlib import Path
 from .engines import ENGINES, ROOT
 
@@ -24,7 +24,13 @@ def engine_status():
 def javbed_update(current):
     release=latest_release("JAVBED/javbed")
     tag=release.get("tag_name","")
-    return tag, tag.lstrip("v") != current.lstrip("v"), release.get("html_url","")
+    def version(value):
+        match=re.fullmatch(r"v?(\d+(?:\.\d+)*)",str(value),re.IGNORECASE)
+        return tuple(int(part) for part in match.group(1).split(".")) if match else None
+    latest, installed = version(tag), version(current)
+    width=max(len(latest or ()),len(installed or ()))
+    newer=bool(latest and installed and latest+(0,)*(width-len(latest)) > installed+(0,)*(width-len(installed)))
+    return tag, newer, release.get("html_url","")
 
 def open_url(url):
     if url:webbrowser.open(url)

@@ -99,6 +99,44 @@ class EngineTests(unittest.TestCase):
                     engine.install_latest()
                 self.assertEqual(managed.read_bytes(), b"old engine")
 
+    def test_failed_directory_switch_restores_complete_previous_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            engine = engines.Engine("Java", "javli", "javli")
+            current = root / "javli"
+            current.mkdir()
+            (current / "javli.exe").write_bytes(b"old engine")
+            (current / "runtime.dll").write_bytes(b"old runtime")
+            payload_file = io.BytesIO()
+            with zipfile.ZipFile(payload_file, "w") as archive:
+                archive.writestr("release/javli.exe", b"new engine")
+                archive.writestr("release/runtime.dll", b"new runtime")
+            payload = payload_file.getvalue()
+            asset = {"name": "javli-windows-x64.zip", "browser_download_url": "https://example.invalid/engine.zip", "digest": "sha256:" + hashlib.sha256(payload).hexdigest()}
+            release = json.dumps({"tag_name": "v2.0.0", "assets": [asset]}).encode()
+            def open_response(request, timeout):
+                return io.BytesIO(release if isinstance(request, engines.urllib.request.Request) else payload)
+            original_replace = os.replace
+            def fail_switch(source, destination):
+                if Path(source).name == "ready":
+                    raise OSError("simulated switch failure")
+                return original_replace(source, destination)
+            with patch.object(engines, "ENGINE_ROOT", root), patch.object(engines.platform, "system", return_value="Windows"), patch.object(engines.platform, "machine", return_value="AMD64"), patch.object(engines.urllib.request, "urlopen", side_effect=open_response), patch.object(engines.os, "replace", side_effect=fail_switch):
+                with self.assertRaisesRegex(OSError, "simulated switch failure"):
+                    engine.install_latest()
+            self.assertEqual((current / "javli.exe").read_bytes(), b"old engine")
+            self.assertEqual((current / "runtime.dll").read_bytes(), b"old runtime")
+
+    def test_interrupted_switch_uses_previous_release_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backup = root / ".javli-backup-recovery" / "javli.exe"
+            backup.parent.mkdir()
+            backup.write_bytes(b"old engine")
+            engine = engines.Engine("Java", "javli", "javli")
+            with patch.object(engines, "ENGINE_ROOT", root), patch.object(engines.platform, "system", return_value="Windows"), patch.dict(os.environ, {"PATH": "", "JAVBED_JAVA": ""}):
+                self.assertEqual(engine.locate(), backup)
+
 
 if __name__ == "__main__":
     unittest.main()

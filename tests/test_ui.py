@@ -72,7 +72,7 @@ class UiTests(unittest.TestCase):
             window = MainWindow()
             window.show()
             self.app.processEvents()
-            self.assertEqual(window.stack.count(), 15)
+            self.assertEqual(window.stack.count(), 16)
             window.select_name("Java")
             page = window.java_page
             page.switch_view("play")

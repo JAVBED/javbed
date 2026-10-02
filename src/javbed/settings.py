@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, sys
+import json, os, sys, tempfile
 from pathlib import Path
 
 def data_root(application_dir=None, local_app_data=None):
@@ -46,6 +46,7 @@ DEFAULTS = {
     "startup_page": "Java",
     "show_onboarding": True,
     "onboarding_complete": False,
+    "developer_mode": False,
 }
 def load():
     data=dict(DEFAULTS)
@@ -58,8 +59,17 @@ def load():
     except (OSError,ValueError):pass
     return data
 def save(data):
-    ROOT.mkdir(parents=True,exist_ok=True)
-    FILE.write_text(json.dumps(data,indent=2),encoding="utf-8")
+    FILE.parent.mkdir(parents=True,exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=".settings-", suffix=".tmp", dir=FILE.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(data, output, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, FILE)
+    finally:
+        temporary.unlink(missing_ok=True)
 def apply_environment(data):
     mapping={"engine_java":"JAVBED_JAVA","engine_bedrock":"JAVBED_BEDROCK","engine_edu":"JAVBED_EDU","engine_lce":"JAVBED_LCE","engine_servers":"JAVBED_SERVERS"}
     for key,env in mapping.items():
