@@ -244,9 +244,29 @@ class InstanceLibrary(QWidget):
             info=InstanceInfo(str(item["name"]),str(item.get("version") or ""),str(item.get("loader") or "vanilla"),str(item.get("era") or "release"),str(item.get("path") or ""))
             for action in manager.ui.all("instance_action"):
                 menu.addAction(action.title,lambda checked=False,entry=action,value=info:manager.ui.invoke(entry,value))
+            for provider in manager.contributions.all("metadata"):
+                menu.addAction("Metadata: " + provider.title, lambda checked=False, entry=provider, value=info: self.show_plugin_metadata(manager, entry, value))
         menu.addSeparator()
         menu.addAction("Delete", lambda: self.delete_instance(item))
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+
+    def show_plugin_metadata(self, manager, provider, instance):
+        job = Job(lambda: manager.contributions.invoke(provider, instance))
+
+        def done(ok, result):
+            if not ok or not isinstance(result, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in result.items()):
+                if ok and manager.records.get(provider.owner) and manager.records[provider.owner].status == "enabled":
+                    manager._fail(provider.owner, "metadata result", TypeError("Expected dict[str, str]"))
+                QMessageBox.warning(self, provider.title, "Metadata is unavailable. See plugin logs.")
+                return
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle(provider.title)
+            dialog.setTextFormat(Qt.TextFormat.PlainText)
+            dialog.setText("\n".join(f"{key}: {value}" for key, value in result.items()) or "No metadata")
+            dialog.exec()
+
+        job.signals.done.connect(done)
+        self.pool.start(job)
 
     def edit_instance(self, item):
         wizard = InstanceWizard(self)

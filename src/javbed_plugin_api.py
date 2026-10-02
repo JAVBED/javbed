@@ -1,5 +1,5 @@
 """Stable third-party import path for JAVBED Plugin API 1."""
 
-from javbed.plugins.api import JAVBED_PLUGIN_API, InstanceInfo, JavbedPlugin, ServerInfo, WorldInfo
+from javbed.plugins.api import JAVBED_PLUGIN_API, DiagnosticResult, InstanceInfo, JavbedPlugin, ModInfo, ServerInfo, WorldInfo
 
-__all__ = ["JAVBED_PLUGIN_API", "JavbedPlugin", "InstanceInfo", "ServerInfo", "WorldInfo"]
+__all__ = ["JAVBED_PLUGIN_API", "JavbedPlugin", "InstanceInfo", "ServerInfo", "WorldInfo", "ModInfo", "DiagnosticResult"]

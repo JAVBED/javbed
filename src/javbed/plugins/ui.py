@@ -53,6 +53,87 @@ class ProgressCard(QFrame):
         layout.addWidget(self.status)
 
 
+class PluginExtensionsPage(QWidget):
+    """Launcher-owned surface for plugin integrations and tools."""
+
+    def __init__(self, manager, parent=None):
+        super().__init__(parent)
+        self.manager = manager
+        self.pool = QThreadPool.globalInstance()
+        root = QVBoxLayout(self)
+        root.setContentsMargins(35, 25, 35, 25)
+        root.addWidget(SectionTitle("EXTENSIONS"))
+        self.status = QLabel("Plugin integrations and tools")
+        self.status.setTextFormat(Qt.TextFormat.PlainText)
+        root.addWidget(self.status)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        container = QWidget()
+        self.rows = QVBoxLayout(container)
+        self.rows.addStretch()
+        scroll.setWidget(container)
+        root.addWidget(scroll, 1)
+        self.refresh()
+
+    def refresh(self):
+        while self.rows.count() > 1:
+            item = self.rows.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        kinds = (("game", "Games and launchers"), ("server_provider", "Server providers"), ("java_tool", "Java tools"), ("update_provider", "Update providers"))
+        found = False
+        for kind, label in kinds:
+            entries = self.manager.contributions.all(kind)
+            if not entries:
+                continue
+            found = True
+            self.rows.insertWidget(self.rows.count() - 1, SectionTitle(label.upper()))
+            for contribution in entries:
+                card = PluginCard()
+                layout = QHBoxLayout(card)
+                title = QLabel(contribution.title + "  ·  " + contribution.owner)
+                title.setTextFormat(Qt.TextFormat.PlainText)
+                layout.addWidget(title, 1)
+                button = JavbedButton("CREATE" if kind == "server_provider" else "RUN" if kind == "java_tool" else "CHECK" if kind == "update_provider" else "LAUNCH")
+                button.clicked.connect(lambda checked=False, item=contribution: self.activate(item))
+                layout.addWidget(button)
+                self.rows.insertWidget(self.rows.count() - 1, card)
+        if not found:
+            self.rows.insertWidget(0, QLabel("No plugin integrations are enabled."))
+
+    def activate(self, item):
+        if item.kind == "server_provider":
+            from PySide6.QtWidgets import QInputDialog
+            name, ok = QInputDialog.getText(self, "Create server", "Server name")
+            if not ok:
+                return
+            from javbed.instances import valid_name
+            if not valid_name(name):
+                QMessageBox.warning(self, "Invalid name", "Use letters, numbers, dots, underscores or dashes.")
+                return
+            version, ok = QInputDialog.getText(self, "Create server", "Minecraft version")
+            if not ok or not version.strip() or len(version) > 80:
+                return
+            args = (name, version.strip())
+        else:
+            args = ()
+        self.status.setText("Running " + item.title + "...")
+        def run():
+            result = self.manager.contributions.invoke(item, *args)
+            return str(result)[:250] if result is not None else "Completed"
+        job = Job(run)
+
+        def done(ok, result):
+            if ok and self.manager.records.get(item.owner) and self.manager.records[item.owner].status == "enabled":
+                self.status.setText(item.title + ": " + result)
+            else:
+                self.status.setText(item.title + " failed. See Plugin Manager logs.")
+
+        job.signals.done.connect(done)
+        self.pool.start(job)
+
+
 class PluginManagerPage(QWidget):
     def __init__(self, manager, *, developer_mode=False, parent=None):
         super().__init__(parent)

@@ -44,3 +44,18 @@ class WorldInfo:
     instance: str
     path: str
     version: str
+
+
+@dataclass(frozen=True)
+class ModInfo:
+    instance: str
+    name: str
+    path: str
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class DiagnosticResult:
+    name: str
+    state: str
+    detail: str
