@@ -15,6 +15,9 @@ class NotificationCenter(QObject):
         self.last_seen: dict[str, float] = {}
 
     def post(self, key: str, message: str, cooldown: int = 300) -> bool:
+        from .settings import load
+        if not bool(load().get("notifications_enabled", True)):
+            return False
         now = time.monotonic()
         if now - self.last_seen.get(key, -10**12) < cooldown:
             return False

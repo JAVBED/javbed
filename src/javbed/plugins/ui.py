@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThreadPool, QUrl, Qt, QSize
 from PySide6.QtGui import QDesktopServices, QImageReader, QPixmap
-from PySide6.QtWidgets import (QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
                                QLineEdit, QMenu, QMessageBox, QPushButton, QScrollArea,
                                QVBoxLayout, QWidget)
 
@@ -60,6 +60,7 @@ class PluginExtensionsPage(QWidget):
         super().__init__(parent)
         self.manager = manager
         self.pool = QThreadPool.globalInstance()
+        self._jobs = set()
         root = QVBoxLayout(self)
         root.setContentsMargins(35, 25, 35, 25)
         root.addWidget(SectionTitle("EXTENSIONS"))
@@ -81,7 +82,7 @@ class PluginExtensionsPage(QWidget):
             item = self.rows.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        kinds = (("game", "Games and launchers"), ("server_provider", "Server providers"), ("java_tool", "Java tools"), ("update_provider", "Update providers"))
+        kinds = (("game", "Games and launchers"), ("server_provider", "Server providers"), ("importer", "Importers"), ("java_tool", "Java tools"), ("update_provider", "Update providers"))
         found = False
         for kind, label in kinds:
             entries = self.manager.contributions.all(kind)
@@ -95,7 +96,7 @@ class PluginExtensionsPage(QWidget):
                 title = QLabel(contribution.title + "  ·  " + contribution.owner)
                 title.setTextFormat(Qt.TextFormat.PlainText)
                 layout.addWidget(title, 1)
-                button = JavbedButton("CREATE" if kind == "server_provider" else "RUN" if kind == "java_tool" else "CHECK" if kind == "update_provider" else "LAUNCH")
+                button = JavbedButton("MANAGE" if kind == "server_provider" and contribution.handlers else "CREATE" if kind == "server_provider" else "IMPORT" if kind == "importer" else "RUN" if kind == "java_tool" else "CHECK" if kind == "update_provider" else "BROWSE" if contribution.handlers else "LAUNCH")
                 button.clicked.connect(lambda checked=False, item=contribution: self.activate(item))
                 layout.addWidget(button)
                 self.rows.insertWidget(self.rows.count() - 1, card)
@@ -103,8 +104,21 @@ class PluginExtensionsPage(QWidget):
             self.rows.insertWidget(0, QLabel("No plugin integrations are enabled."))
 
     def activate(self, item):
+        if item.kind == "importer":
+            source, _ = QFileDialog.getOpenFileName(self, "Import file")
+            if source:
+                self._run(item, lambda: self.manager.contributions.invoke(item, Path(source)))
+            return
+        if item.kind == "game" and item.handlers:
+            self._choose_game(item)
+            return
+        if item.kind == "server_provider" and item.handlers:
+            self._manage_servers(item)
+            return
+        if item.kind == "update_provider" and item.handlers:
+            self._check_updates(item)
+            return
         if item.kind == "server_provider":
-            from PySide6.QtWidgets import QInputDialog
             name, ok = QInputDialog.getText(self, "Create server", "Server name")
             if not ok:
                 return
@@ -118,9 +132,12 @@ class PluginExtensionsPage(QWidget):
             args = (name, version.strip())
         else:
             args = ()
+        self._run(item, lambda: self.manager.contributions.invoke(item, *args))
+
+    def _run(self, item, callback):
         self.status.setText("Running " + item.title + "...")
         def run():
-            result = self.manager.contributions.invoke(item, *args)
+            result = callback()
             return str(result)[:250] if result is not None else "Completed"
         job = Job(run)
 
@@ -130,8 +147,92 @@ class PluginExtensionsPage(QWidget):
             else:
                 self.status.setText(item.title + " failed. See Plugin Manager logs.")
 
-        job.signals.done.connect(done)
+        self._start(job, done)
+
+    def _start(self, job, callback):
+        self._jobs.add(job)
+        def completed(ok, result):
+            self._jobs.discard(job)
+            callback(ok, result)
+        job.signals.done.connect(completed)
         self.pool.start(job)
+
+    def _choose_game(self, item):
+        from .api import GameInfo
+        self.status.setText("Finding games for " + item.title + "...")
+        job = Job(lambda: self.manager.contributions.invoke_handler(item, "discover"))
+        def done(ok, rows):
+            if not ok or not isinstance(rows, (list, tuple)) or any(not isinstance(row, GameInfo) for row in rows):
+                self.status.setText("Could not discover games. See Plugin Manager logs.")
+                return
+            if not rows:
+                self.status.setText("No games found for " + item.title)
+                return
+            labels = [f"{row.title} ({row.version})" if row.version else row.title for row in rows]
+            choice, accepted = QInputDialog.getItem(self, "Launch game", "Choose a game", labels, 0, False)
+            if accepted:
+                game = rows[labels.index(choice)]
+                self._run(item, lambda: self.manager.contributions.invoke_handler(item, "launch", game.id))
+        self._start(job, done)
+
+    def _manage_servers(self, item):
+        from .api import ServerInfo
+        self.status.setText("Finding servers for " + item.title + "...")
+        job = Job(lambda: self.manager.contributions.invoke_handler(item, "list"))
+        def done(ok, rows):
+            if not ok or not isinstance(rows, (list, tuple)) or any(not isinstance(row, ServerInfo) or row.provider != item.id for row in rows):
+                self.status.setText("Could not list servers. See Plugin Manager logs.")
+                return
+            choices = ["Create new server"] + [f"{row.name} ({'running' if row.running else 'stopped'})" for row in rows]
+            choice, accepted = QInputDialog.getItem(self, "Server provider", "Choose a server", choices, 0, False)
+            if not accepted:
+                return
+            if choice == choices[0]:
+                name, accepted = QInputDialog.getText(self, "Create server", "Server name")
+                if not accepted:
+                    return
+                from javbed.instances import valid_name
+                if not valid_name(name):
+                    QMessageBox.warning(self, "Invalid name", "Use letters, numbers, dots, underscores or dashes.")
+                    return
+                version, accepted = QInputDialog.getText(self, "Create server", "Minecraft version")
+                if accepted and version.strip() and len(version) <= 80:
+                    self._run(item, lambda: self.manager.contributions.invoke_handler(item, "create", name, version.strip()))
+                return
+            server = rows[choices.index(choice) - 1]
+            actions = ["Start", "Stop", "Restart", "Backup", "Send command"]
+            action, accepted = QInputDialog.getItem(self, server.name, "Action", actions, 0, False)
+            if not accepted:
+                return
+            method = action.lower().replace(" ", "_")
+            if method == "send_command":
+                command, accepted = QInputDialog.getText(self, server.name, "Console command")
+                if not accepted or not command.strip() or "\n" in command or "\r" in command:
+                    return
+                self._run(item, lambda: self.manager.contributions.invoke_handler(item, method, server.name, command))
+            else:
+                self._run(item, lambda: self.manager.contributions.invoke_handler(item, method, server.name))
+        self._start(job, done)
+
+    def _check_updates(self, item):
+        from .api import UpdateInfo
+        self.status.setText("Checking updates from " + item.title + "...")
+        job = Job(lambda: self.manager.contributions.invoke_handler(item, "check"))
+        def done(ok, rows):
+            if not ok or not isinstance(rows, (list, tuple)) or any(not isinstance(row, UpdateInfo) for row in rows):
+                self.status.setText("Update check failed. See Plugin Manager logs.")
+                return
+            if not rows:
+                self.status.setText("No updates available from " + item.title)
+                return
+            labels = [f"{row.title}: {row.installed_version} → {row.available_version}" for row in rows]
+            choice, accepted = QInputDialog.getItem(self, "Available updates", "Choose an update", labels, 0, False)
+            if not accepted:
+                return
+            selected = rows[labels.index(choice)]
+            if QMessageBox.question(self, "Apply update", f"Apply {selected.title} {selected.available_version}?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                self._run(item, lambda: self.manager.contributions.invoke_handler(item, "apply", selected.id))
+        self._start(job, done)
 
 
 class PluginManagerPage(QWidget):
@@ -140,6 +241,7 @@ class PluginManagerPage(QWidget):
         self.manager = manager
         self.developer_mode = developer_mode
         self.pool = QThreadPool.globalInstance()
+        self._jobs = set()
         root = QVBoxLayout(self)
         root.setContentsMargins(35, 25, 35, 25)
         header = QHBoxLayout()
@@ -358,14 +460,19 @@ class PluginManagerPage(QWidget):
                         raise ValueError("Update package has the wrong ID or version")
                     if not self._approve(manifest, "Update"):
                         return
-                    new = self.manager.install(path, replace=True)
-                    self.manager.enable(new.id, approve=True)
+                    self.manager.update(path, approve=True)
                 except Exception as exc:
                     QMessageBox.warning(self, "Plugin update failed", str(exc))
                 finally:
                     temporary.cleanup()
                     self.refresh()
-            download_job.signals.done.connect(downloaded)
-            self.pool.start(download_job)
-        job.signals.done.connect(checked)
+            self._start(download_job, downloaded)
+        self._start(job, checked)
+
+    def _start(self, job, callback):
+        self._jobs.add(job)
+        def completed(ok, result):
+            self._jobs.discard(job)
+            callback(ok, result)
+        job.signals.done.connect(completed)
         self.pool.start(job)

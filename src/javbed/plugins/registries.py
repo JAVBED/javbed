@@ -31,6 +31,7 @@ class EventBus:
     def __init__(self, on_error):
         self._subscriptions = {}
         self._on_error = on_error
+        self.dispatch = None
         self._next = 0
         self._lock = threading.RLock()
 
@@ -66,7 +67,10 @@ class EventBus:
                 continue
             if subscribed == event:
                 try:
-                    callback(**data)
+                    if self.dispatch:
+                        self.dispatch(owner, "event " + event, lambda fn=callback, payload=dict(data): fn(**payload))
+                    else:
+                        callback(**data)
                 except Exception as exc:
                     self._on_error(owner, "event " + event, exc)
 
@@ -75,6 +79,7 @@ class CommandRegistry:
     def __init__(self, on_error):
         self._commands = {}
         self._on_error = on_error
+        self.dispatch = None
         self._lock = threading.RLock()
 
     def register(self, owner, *, id, title, callback, description="", keywords=(), icon=""):
@@ -98,7 +103,10 @@ class CommandRegistry:
         if not command:
             return False
         try:
-            command.callback()
+            if self.dispatch:
+                self.dispatch(command.owner, "command " + id, command.callback)
+            else:
+                command.callback()
             return True
         except Exception as exc:
             self._on_error(command.owner, "command " + id, exc)
@@ -118,6 +126,7 @@ class UIRegistry:
         self._items = {}
         self._on_error = on_error
         self.changed = lambda: None
+        self.dispatch = None
         self._lock = threading.RLock()
 
     def register(self, owner, kind, *, id, title, callback):
@@ -139,6 +148,8 @@ class UIRegistry:
             if self._items.get(item.id) is not item:
                 return None
         try:
+            if self.dispatch and item.kind.endswith("_action"):
+                return self.dispatch(item.owner, "UI extension " + item.id, lambda: item.callback(*args))
             return item.callback(*args)
         except Exception as exc:
             self._on_error(item.owner, "UI extension " + item.id, exc)
@@ -159,6 +170,7 @@ class RouteRegistry:
     def __init__(self, on_error):
         self._items = {}
         self._on_error = on_error
+        self.dispatch = None
         self._lock = threading.RLock()
 
     def register(self, owner, route, callback):
@@ -187,7 +199,10 @@ class RouteRegistry:
         if not item:
             return False
         try:
-            item[1](*args)
+            if self.dispatch:
+                self.dispatch(item[0], "handler " + route, lambda: item[1](*args))
+            else:
+                item[1](*args)
             return True
         except Exception as exc:
             self._on_error(item[0], "handler " + route, exc)
@@ -200,6 +215,60 @@ class RouteRegistry:
                     del self._items[key]
 
 
+class FileHandlerRegistry:
+    """Allow multiple handlers; the launcher asks which one to use."""
+
+    def __init__(self, on_error):
+        self._items = {}
+        self._on_error = on_error
+        self._lock = threading.RLock()
+
+    def register(self, owner, extension, callback):
+        if not callable(callback):
+            raise ValueError("File handler must be callable")
+        with self._lock:
+            entries = self._items.setdefault(extension, {})
+            if owner in entries:
+                raise ValueError("Duplicate file handler for " + extension)
+            entries[owner] = callback
+
+    def candidates(self, extension):
+        with self._lock:
+            return tuple(self._items.get(extension, {}))
+
+    def owners(self, extension):
+        with self._lock:
+            entries = self._items.get(extension, {})
+            return next(iter(entries.items())) if len(entries) == 1 else None
+
+    def routes(self):
+        with self._lock:
+            return tuple(self._items)
+
+    def invoke(self, extension, path, *, owner=None):
+        with self._lock:
+            entries = self._items.get(extension, {})
+            if owner is None and len(entries) != 1:
+                raise ValueError("Choose a file handler for " + extension)
+            selected = owner or next(iter(entries), None)
+            callback = entries.get(selected)
+        if callback is None:
+            return False
+        try:
+            callback(path)
+            return True
+        except Exception as exc:
+            self._on_error(selected, "file handler " + extension, exc)
+            return False
+
+    def remove_owner(self, owner):
+        with self._lock:
+            for extension, entries in list(self._items.items()):
+                entries.pop(owner, None)
+                if not entries:
+                    del self._items[extension]
+
+
 @dataclass(frozen=True)
 class Contribution:
     owner: str
@@ -207,6 +276,7 @@ class Contribution:
     id: str
     title: str
     callback: Callable
+    handlers: dict[str, Callable] | None = None
 
 
 class ContributionRegistry:
@@ -220,10 +290,12 @@ class ContributionRegistry:
         self.changed = lambda: None
         self._lock = threading.RLock()
 
-    def register(self, owner, kind, *, id, title, callback):
+    def register(self, owner, kind, *, id, title, callback, handlers=None):
         if kind not in self.KINDS or not isinstance(id, str) or not re.fullmatch(r"[a-z][a-z0-9_.-]{1,120}", id) or not isinstance(title, str) or not title.strip() or not callable(callback):
             raise ValueError("Invalid plugin contribution")
-        item = Contribution(owner, kind, id, title, callback)
+        if handlers is not None and (not isinstance(handlers, dict) or any(not isinstance(key, str) or not callable(value) for key, value in handlers.items())):
+            raise ValueError("Invalid contribution handlers")
+        item = Contribution(owner, kind, id, title, callback, dict(handlers) if handlers else None)
         with self._lock:
             if id in self._items:
                 raise ValueError("Duplicate contribution ID: " + id)
@@ -254,14 +326,20 @@ class ContributionRegistry:
             self.changed()
 
     def invoke(self, item, *args):
+        return self.invoke_handler(item, None, *args)
+
+    def invoke_handler(self, item, method, *args):
         with self._lock:
             if self._items.get(item.id) is not item:
                 return None
+        callback = item.callback if method is None else (item.handlers or {}).get(method)
+        if callback is None:
+            raise NotImplementedError(f"{item.id} does not support {method}")
         try:
-            result = item.callback(*args)
+            result = callback(*args)
             return result.result(timeout=300) if isinstance(result, Future) else result
         except Exception as exc:
-            self._on_error(item.owner, item.kind + " " + item.id, exc)
+            self._on_error(item.owner, item.kind + " " + item.id + ("." + method if method else ""), exc)
             return None
 
     def remove_owner(self, owner):

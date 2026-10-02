@@ -14,9 +14,40 @@ from javbed.app import ExtraPage, MainWindow, SettingsPage, UpdatesPage
 from javbed.instance_library import InstanceWizard
 from javbed.shell_widgets import game_icon
 from javbed import settings
+from javbed.notifications import NotificationCenter
+from javbed.plugins.api import GameInfo
+from javbed.plugins.manager import PluginManager, PluginRecord
+from javbed.plugins.ui import PluginExtensionsPage
 
 
 class UiTests(unittest.TestCase):
+    def test_structured_game_extension_can_browse_and_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = PluginManager(Path(directory))
+            owner = "com.example.game"
+            manager.records[owner] = PluginRecord(Path(directory) / owner, status="enabled")
+            launched = []
+            discover = lambda: [GameInfo("game-one", "Game One")]
+            manager.contributions.register(owner, "game", id="example.game", title="Example", callback=discover, handlers={"discover": discover, "launch": lambda game: launched.append(game)})
+            page = PluginExtensionsPage(manager)
+            with patch("javbed.plugins.ui.QInputDialog.getItem", return_value=("Game One", True)):
+                page.activate(manager.contributions.get("example.game"))
+                self.wait_for(lambda: bool(launched))
+            self.assertEqual(launched, ["game-one"])
+            page.close()
+            manager.shutdown()
+
+    def test_notifications_respect_setting(self):
+        center = NotificationCenter()
+        posted = []
+        center.posted.connect(posted.append)
+        with patch("javbed.settings.load", return_value={"notifications_enabled": False}):
+            self.assertFalse(center.post("example", "Hidden"))
+        self.assertEqual(posted, [])
+        with patch("javbed.settings.load", return_value={"notifications_enabled": True}):
+            self.assertTrue(center.post("example", "Shown"))
+        self.assertEqual(posted, ["Shown"])
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])

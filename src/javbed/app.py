@@ -1351,11 +1351,12 @@ class SettingsPage(QWidget):
         self.compact_nav=QCheckBox();self.compact_nav.setChecked(bool(self.data.get("compact_navigation",False)))
         self.show_artwork=QCheckBox();self.show_artwork.setChecked(bool(self.data.get("show_artwork",True)))
         self.developer_mode=QCheckBox();self.developer_mode.setChecked(bool(self.data.get("developer_mode",False)))
+        self.notifications_enabled=QCheckBox();self.notifications_enabled.setChecked(bool(self.data.get("notifications_enabled",True)))
         self.startup=QComboBox();self.startup.addItems(["Home","Java","Servers","Worlds","Updates"]);self.startup.setCurrentText(str(self.data.get("startup_page","Home")))
         def heading(text):
             label=QLabel(text);label.setObjectName("game");form.addRow(label)
         heading("GENERAL")
-        form.addRow("Check for updates",self.check_updates);form.addRow("Close on game start",self.close_on_launch);form.addRow("Minimize on game start",self.minimize_on_launch);form.addRow("Startup page",self.startup)
+        form.addRow("Check for updates",self.check_updates);form.addRow("Notifications",self.notifications_enabled);form.addRow("Close on game start",self.close_on_launch);form.addRow("Minimize on game start",self.minimize_on_launch);form.addRow("Startup page",self.startup)
         heading("JAVA")
         form.addRow("Java memory",self.memory);form.addRow("Window width",self.width);form.addRow("Window height",self.height);form.addRow("Fullscreen",self.fullscreen);form.addRow("Minecraft directory",self.minecraft_dir);form.addRow("Java runtime",self.java_runtime)
         heading("ENGINES")
@@ -1396,7 +1397,7 @@ class SettingsPage(QWidget):
         self.data=load_settings()
         self.data.update({"java_memory_mb":self.memory.value(),"resolution_width":self.width.value(),"resolution_height":self.height.value(),"fullscreen":self.fullscreen.isChecked(),"close_on_launch":self.close_on_launch.isChecked(),"minimize_on_launch":self.minimize_on_launch.isChecked(),"check_updates":self.check_updates.isChecked(),"minecraft_directory":self.minecraft_dir.text().strip(),"java_runtime":self.java_runtime.text().strip(),"curseforge_api_key":self.curseforge.text().strip(),"bedrock_worlds_path":self.bedrock_worlds.text().strip(),"edu_worlds_path":self.edu_worlds.text().strip(),"servli_home":self.servli_home.text().strip(),"server_backup_mode":self.backup_mode.currentText(),"server_backup_keep":self.backup_keep.value()})
         for key, field in self.engine_fields.items(): self.data[key]=field.text().strip()
-        self.data.update({"theme":self.theme_choice.currentData(),"accent_color":self.accent.text().strip(),"compact_navigation":self.compact_nav.isChecked(),"show_artwork":self.show_artwork.isChecked(),"startup_page":self.startup.currentText(),"developer_mode":self.developer_mode.isChecked()})
+        self.data.update({"theme":self.theme_choice.currentData(),"accent_color":self.accent.text().strip(),"compact_navigation":self.compact_nav.isChecked(),"show_artwork":self.show_artwork.isChecked(),"startup_page":self.startup.currentText(),"developer_mode":self.developer_mode.isChecked(),"notifications_enabled":self.notifications_enabled.isChecked()})
         save_settings(self.data); apply_environment(self.data)
         app=QApplication.instance()
         if app:app.setStyleSheet(stylesheet(self.data))
@@ -1713,14 +1714,15 @@ class MainWindow(QMainWindow):
         if not source.is_file():
             return
         suffix = source.suffix.lower()
-        handler=self.plugin_manager.files.owners(suffix)
-        if handler:
+        handlers=self.plugin_manager.files.candidates(suffix)
+        if handlers:
             builtin=suffix in {".jar",".mrpack",".zip",".iso"}
-            if builtin:
-                choice,ok=QInputDialog.getItem(self,"Open file",source.name+" can be handled by:",["JAVBED",handler[0]],0,False)
+            if builtin or len(handlers)>1:
+                choices=(["JAVBED"] if builtin else [])+list(handlers)
+                choice,ok=QInputDialog.getItem(self,"Open file",source.name+" can be handled by:",choices,0,False)
                 if not ok:return
                 if choice!="JAVBED":
-                    self.plugin_manager._executor.submit(self.plugin_manager.files.invoke,suffix,source);return
+                    self.plugin_manager._executor.submit(lambda:self.plugin_manager.files.invoke(suffix,source,owner=choice));return
             else:
                 self.plugin_manager._executor.submit(self.plugin_manager.files.invoke,suffix,source);return
         if suffix == ".mrpack":
@@ -1814,7 +1816,9 @@ def main():
         except (OSError,ValueError):previous=0
         startup_marker.write_text(str(previous+1),encoding="utf-8")
         job=Job(manager.load_enabled)
+        w._plugin_startup_job=job
         def loaded(ok,result):
+            w._plugin_startup_job=None
             if manager._closed:
                 return
             if not ok:

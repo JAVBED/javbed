@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from javbed.plugins.context import PluginContext
-from javbed.plugins.api import DiagnosticResult
+from javbed.plugins.api import DiagnosticResult, GameInfo, ServerInfo, UpdateInfo
 from javbed.plugins.manager import PluginManager
 from javbed.plugins.manifest import PluginManifest, compare
 from javbed.plugins.packages import inspect, install
@@ -38,6 +38,89 @@ def make_plugin(root, identifier="com.example.hello", permissions=None, code=Non
 
 
 class PluginTests(unittest.TestCase):
+    def test_failed_update_restores_previous_plugin(self):
+        old_code = "from javbed_plugin_api import JavbedPlugin\nclass Plugin(JavbedPlugin):\n    def on_load(self, context): context.commands.register(id='example.hello', title='Hello', callback=lambda: None)\ndef create_plugin(): return Plugin()\n"
+        broken_code = "from javbed_plugin_api import JavbedPlugin\nclass Plugin(JavbedPlugin):\n    def on_load(self, context): raise RuntimeError('broken update')\ndef create_plugin(): return Plugin()\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root, permissions=["commands"], code=old_code)
+            source = root / "incoming"
+            source.mkdir()
+            (source / "javbed-plugin.json").write_text(json.dumps(manifest(permissions=["commands"], version="1.1.0")), encoding="utf-8")
+            (source / "plugin.py").write_text(broken_code, encoding="utf-8")
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.hello", approve=True)
+            with self.assertRaises(RuntimeError):
+                manager.update(source, approve=True)
+            self.assertEqual(manager.records["com.example.hello"].manifest.version, "1.0.0")
+            self.assertEqual(manager.records["com.example.hello"].status, "enabled")
+            self.assertTrue(manager.commands.invoke("example.hello"))
+            manager.shutdown()
+
+    def test_attached_callbacks_run_off_caller_thread(self):
+        plain = "from javbed_plugin_api import JavbedPlugin\ndef create_plugin(): return JavbedPlugin()\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root, permissions=["commands", "ui", "deep_links"], code=plain)
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.hello", approve=True)
+            seen = []
+            ready = threading.Event()
+            main_thread = threading.get_ident()
+            def callback():
+                seen.append(threading.get_ident())
+                ready.set()
+            manager.commands.register("com.example.hello", id="example.test", title="Test", callback=callback)
+            manager.attach()
+            self.assertTrue(manager.commands.invoke("example.test"))
+            self.assertTrue(ready.wait(2))
+            self.assertNotEqual(seen[0], main_thread)
+            manager.shutdown()
+
+    def test_structured_provider_contracts_and_cleanup(self):
+        plain = "from javbed_plugin_api import JavbedPlugin\ndef create_plugin(): return JavbedPlugin()\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_plugin(root, permissions=["integrations", "server_providers", "servers.read", "servers.modify", "servers.console", "update_providers", "network"], code=plain)
+            manager = PluginManager(root)
+            manager.discover()
+            manager.enable("com.example.hello", approve=True)
+            context = PluginContext(manager, "com.example.hello", manager.records["com.example.hello"].logger)
+            calls = []
+            context.integrations.register(id="example.games", title="Games", discover=lambda: [GameInfo("game1", "Game One")], launch=lambda game: calls.append(("launch", game)))
+            self.assertEqual(context.integrations.list("example.games"), (GameInfo("game1", "Game One"),))
+            context.integrations.launch("example.games", "game1").result(timeout=2)
+            provider = "example.servers"
+            context.server_providers.register(id=provider, title="Servers", create=lambda name, version: calls.append(("create", name)), list=lambda: [ServerInfo("test", provider, "1.21", False, None)], start=lambda name: calls.append(("start", name)), stop=lambda name: None, restart=lambda name: None, send_command=lambda name, command: calls.append(("command", command)), backup=lambda name: None)
+            with patch("javbed.servers.server_snapshot", return_value=[]):
+                self.assertEqual(context.servers.get("test", provider).provider, provider)
+            context.servers.start("test", provider=provider).result(timeout=2)
+            context.servers.send_command("test", "say hi", provider=provider).result(timeout=2)
+            context.update_providers.register(id="example.updates", title="Updates", check=lambda: [UpdateInfo("u1", "Game One", "1.0", "1.1")], apply=lambda update: calls.append(("update", update)))
+            self.assertEqual(context.update_providers.check("example.updates")[0].available_version, "1.1")
+            context.update_providers.apply("example.updates", "u1").result(timeout=2)
+            self.assertEqual(calls, [("launch", "game1"), ("start", "test"), ("command", "say hi"), ("update", "u1")])
+            manager.disable("com.example.hello")
+            self.assertEqual(manager.contributions.all("server_provider"), ())
+            manager.shutdown()
+
+    def test_file_handler_conflicts_require_explicit_choice(self):
+        from javbed.plugins.registries import FileHandlerRegistry
+        called = []
+        registry = FileHandlerRegistry(lambda *_: None)
+        registry.register("com.example.one", ".demo", lambda path: called.append("one"))
+        registry.register("com.example.two", ".demo", lambda path: called.append("two"))
+        self.assertEqual(registry.candidates(".demo"), ("com.example.one", "com.example.two"))
+        with self.assertRaisesRegex(ValueError, "Choose"):
+            registry.invoke(".demo", Path("test.demo"))
+        self.assertTrue(registry.invoke(".demo", Path("test.demo"), owner="com.example.two"))
+        self.assertEqual(called, ["two"])
+        registry.remove_owner("com.example.two")
+        self.assertTrue(registry.invoke(".demo", Path("test.demo")))
+        self.assertEqual(called, ["two", "one"])
+
     def test_extended_contributions_permissions_and_reload_cleanup(self):
         code = "from javbed_plugin_api import JavbedPlugin, DiagnosticResult\nclass Plugin(JavbedPlugin):\n    def on_load(self, context):\n        context.integrations.register(id='example.game', title='Example game', callback=lambda: 'launched')\n        context.server_providers.register(id='example.server', title='Example server', callback=lambda name, version: name + version)\n        context.diagnostics.register(id='example.check', title='Example check', callback=lambda: DiagnosticResult('Ready', 'healthy', 'OK'))\n        context.java.register_tool(id='example.tool', title='Example tool', callback=lambda: 'done')\n        context.metadata.register(id='example.meta', title='Example metadata', callback=lambda instance: {'Name': instance.name})\n        context.update_providers.register(id='example.updates', title='Example updates', callback=lambda: 'current')\n        context.importers.register(id='example.import', title='Example import', extension='.example', callback=lambda path: path.name)\ndef create_plugin(): return Plugin()\n"
         permissions = ["integrations", "server_providers", "diagnostics", "java_tools", "metadata", "instances.read", "update_providers", "network", "importers", "files.read"]
@@ -66,8 +149,11 @@ class PluginTests(unittest.TestCase):
             manager.discover()
             manager.enable("com.example.hello", approve=True)
             context = PluginContext(manager, "com.example.hello", manager.records["com.example.hello"].logger)
+            self.assertIn("integrations", context.permissions)
             with self.assertRaises(PermissionError):
                 context.server_providers.register(id="example.provider", title="Provider", callback=lambda *_: None)
+            with self.assertRaises(PermissionError):
+                context.server_providers
             with self.assertRaises(PermissionError):
                 context.process.launch(root / "missing")
             with self.assertRaises(PermissionError):
